@@ -53,7 +53,7 @@ kapwa — what participants owe each other
   --json   force JSON; it is already the default when piped
 
   key      KAPWA_KEY, else ~/.config/kapwa/key
-  node     KAPWA_URL, else http://127.0.0.1:3410
+  node     --url, else KAPWA_URL, else http://127.0.0.1:3410
   exit     0 ok · 1 no · 2 usage · 3 not identified
 
 examples
@@ -78,6 +78,7 @@ struct Args {
     json: bool,
     wait: bool,
     hook: bool,
+    url: Option<String>,
     with: Option<String>,
     role: Option<String>,
     hours: Option<i64>,
@@ -100,6 +101,7 @@ fn parse(raw: &[String]) -> Result<Args, String> {
             "--json" => a.json = true,
             "--wait" => a.wait = true,
             "--hook" => a.hook = true,
+            "--url" => a.url = Some(val("--url")?),
             "--with" => a.with = Some(val("--with")?),
             "--role" => a.role = Some(val("--role")?),
             "--hours" => {
@@ -139,12 +141,16 @@ impl Node {
                 .map(|v| v.trim().to_string())
                 .filter(|v| !v.is_empty())
         };
-        let url = env("KAPWA_URL").unwrap_or_else(|| {
-            format!(
-                "http://127.0.0.1:{}",
-                env("KAPWA_PORT").unwrap_or_else(|| "3410".into())
-            )
-        });
+        let url = a
+            .url
+            .clone()
+            .or_else(|| env("KAPWA_URL"))
+            .unwrap_or_else(|| {
+                format!(
+                    "http://127.0.0.1:{}",
+                    env("KAPWA_PORT").unwrap_or_else(|| "3410".into())
+                )
+            });
         // on one OS account every key is readable by every process, so
         // which one you sign with is a choice, not a wall
         let file = match a.me.clone().or_else(|| env("KAPWA_ME")) {
