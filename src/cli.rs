@@ -255,17 +255,28 @@ const SETUP_CLAUDE: &str = r#"{
 
 /// Returns the process exit code.
 pub async fn run(raw: Vec<String>) -> i32 {
-    let (cmd, rest) = match raw.split_first() {
-        Some((c, r)) if !c.starts_with('-') => (c.as_str(), r.to_vec()),
-        _ => ("board", raw.clone()),
-    };
-    let mut a = match parse(&rest) {
+    let mut a = match parse(&raw) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("kapwa: {e}\n\n{HELP}");
             return 2;
         }
     };
+    // the command is the first bare word, wherever the flags sit; with none,
+    // it's the board
+    const COMMANDS: [&str; 12] = [
+        "board", "say", "take", "drop", "done", "ask", "mine", "show", "prime", "protocol",
+        "whoami", "setup",
+    ];
+    let cmd_owned = match a.pos.first() {
+        Some(c) if COMMANDS.contains(&c.as_str()) => a.pos.remove(0),
+        Some(c) => {
+            eprintln!("kapwa: unknown command `{c}`\n       kapwa --help");
+            return 2;
+        }
+        None => "board".to_string(),
+    };
+    let cmd = cmd_owned.as_str();
     // a SessionStart hook hands us the session on stdin: make it this
     // session's tag, so many sessions of one key are told apart
     let mut hook_tag = None;
