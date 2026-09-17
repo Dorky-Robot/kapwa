@@ -1,47 +1,62 @@
-# kapwa
+# Working in kapwa
 
-Agentic mesh coordination for machines that care for each other. Each machine runs kapwa to provide identity, discovery, communication, remote execution, and shared skills. The intelligence comes from AI agents (Claude Code) — kapwa is the nervous system, not the brain.
+Read [`README.md`](README.md) and [`PROTOCOL.md`](PROTOCOL.md) first. The design
+reasoning, and every open decision, is in [`ideas/`](ideas/)
+(https://kapwa-ideas.felixflor.es).
 
-## Architecture
+## What kapwa is
 
-- **config.rs** — Minimal config: identity name + peer list. `~/.config/kapwa/config.json`
-- **identity.rs** — Dynamic machine state: hostname, arch, tunnels, services, disk, load, pending updates. Shells out to `tunnels list --json`, `brew outdated --json`, `sw_vers`, `df`, `sysctl`
-- **ssh.rs** — SSH command execution with timeout and BatchMode=yes. The transport layer for all peer communication
-- **inbox.rs** — Simple message store at `~/.config/kapwa/inbox.json`. Append/read/clear
-- **skills.rs** — Skill files at `~/.config/kapwa/skills/*.md`. List/show/sync between peers
-- **main.rs** — CLI dispatch (hand-rolled, no clap)
+What participants owe each other: a shared, append-only record of who has
+promised what to whom. People, agents and whole collectives are the same kind of
+participant. Coordination happens by leaving marks, not by sending messages.
 
-## Build & Install
+## Rules
+
+1. **One thing.** kapwa is a ledger of commitments. What a collective *knows* is
+   kita's. Moving bytes and real-time connections are another tool's. The test for
+   any feature: is it about what we know, what we owe, or what we move? Only
+   "owe" belongs here.
+2. **kapwa knows no sibling.** Other protocols ride it through two generic slots,
+   `["ref", uri, word?]` and `["payload", type, string]`. Never put another
+   project's name into the protocol, the tags or the code.
+3. **It is a protocol, not an app.** If it doesn't fit on the index card it is a
+   convention, and nobody has to learn it. A second implementation in another
+   language must stay an afternoon's work. Test vectors are the contract.
+4. **Keep it small.** Four verbs and `ask`. Unknown kinds and fields are kept, and
+   ignored. No version negotiation, ever.
+5. **No domain nouns.** No person's name, product or business term in a status,
+   a field, a function or an example.
+6. **Every writer owns one log.** Nobody writes anyone else's. Replication is a
+   pull by `seq`; a node that cannot be pulled from publishes its own signed
+   events. "Hub" is a property (always on, reachable), never a role.
+7. **Fail closed.** Nothing is open but `/healthz` and the sign-in flow.
+8. **Measure, do not assert.** A claim about cost or scale comes with the script
+   that produced it.
+9. **Micro-commits.** One decision, one commit; the message carries what, why,
+   what was rejected. `diwa search kapwa "<topic>"` before non-trivial work.
+
+## Layout
 
 ```
-cargo build --release
-cp target/release/kapwa ~/.local/bin/
+src/config.rs   env → Config (reads ~/.config/kapwa/env itself)
+src/log.rs      per-writer logs, own seq, mirror ingest (contiguous only)
+src/board.rs    the fold
+src/puller.rs   one task per peer under a restart-on-panic supervisor
+src/auth.rs     who is asking: mesh token | agent key | session
+src/oidc.rs     Pocket ID sign-in
+src/render.rs   board.txt and the read-only page
+src/routes.rs   the HTTP surface
+scripts/        deploy.sh · two-node.sh (the failure cases, runnable)
+ideas/          the design site, static HTML
 ```
 
-## CLI
+## Commands
 
 ```
-kapwa                              # Show own identity (default)
-kapwa identity                     # Full JSON state of this machine
-kapwa peers                        # List configured peers
-kapwa ask <peer> <query>           # Query peer (identity|tunnels|routes|updates)
-kapwa tell <peer> "<message>"      # Send message to peer's inbox
-kapwa inbox                        # Read messages
-kapwa inbox clear                  # Clear inbox
-kapwa run <peer> "<command>"       # Execute command on peer via SSH
-kapwa skills                       # List installed skills
-kapwa skill show <name>            # Print a skill
-kapwa skill sync                   # Pull skills from peers
-kapwa peer add <name> --ssh <alias>
-kapwa peer rm <name>
-kapwa --version
-kapwa help
+cargo test && cargo clippy --all-targets -- -D warnings
+A_PORT=3510 B_PORT=3511 scripts/two-node.sh    # beside a live node
+scripts/deploy.sh <ssh-host> [--intel]
 ```
 
-## Design Principles
-
-- **No daemon, no hardcoded logic.** Kapwa provides primitives. AI agents provide intelligence.
-- **Skills are markdown, not code.** New capabilities = new `.md` files, not new Rust.
-- **SSH is the only transport.** Already configured between all machines. No HTTP servers, no ports to open.
-- **Shells out to `tunnels`.** Never imports tunnels code. SRP preserved.
-- **Minimal config.** Identity + peers. Everything else is discovered dynamically.
+`v0.1.0` (tagged) was a different program under this name: ssh-only, no daemon,
+with remote exec and skill sync. Those are not the ledger's job and are not here.
