@@ -38,6 +38,11 @@ pub struct Step {
     /// how many events this line stands for: one, unless a run of them
     /// was collapsed
     pub times: usize,
+    /// when this step freed an ask, who had been waiting on it. Read here,
+    /// in the fold, because only the fold can see that an item has one
+    /// open ask at a time — a reader walking backwards for the nearest
+    /// `asked` is guessing at an invariant it cannot check.
+    pub answers: Option<String>,
 }
 
 fn when(at: &str) -> Option<DateTime<Local>> {
@@ -82,8 +87,19 @@ fn word_for(verb: &str, first: bool, fold: Option<&str>) -> String {
 pub fn walk(st: &State, me: &str, topics: &[String]) -> Vec<Step> {
     let mut steps: Vec<(String, String, u64, Step)> = vec![];
     for item in st.items.values().filter(|i| wanted(i, topics)) {
+        // the ask still open as the history plays forward; the fold clears
+        // an ask when it is answered, so there is never more than one
+        let mut asked_by: Option<String> = None;
         for (n, h) in item.history.iter().enumerate() {
             let word = word_for(&h.verb, n == 0, h.fold.as_deref());
+            let answers = match word.as_str() {
+                "asked" => {
+                    asked_by = Some(h.by.clone());
+                    None
+                }
+                "answered" => asked_by.take(),
+                _ => None,
+            };
             let text = h.text.clone().filter(|t| !t.is_empty());
             let what = match (word.as_str(), &text) {
                 ("wrote" | "answered" | "asked" | "finished", Some(t)) => t.clone(),
@@ -112,6 +128,7 @@ pub fn walk(st: &State, me: &str, topics: &[String]) -> Vec<Step> {
                     // whole point of marking your own
                     mine: h.by == me,
                     times: 1,
+                    answers,
                 },
             ));
         }
@@ -132,6 +149,7 @@ pub fn collapse(steps: Vec<Step>) -> Vec<Step> {
                 p.times += 1;
                 // the last word on it is the one that still stands
                 p.what = s.what;
+                p.answers = s.answers;
                 p.at = s.at;
                 p.clock = s.clock;
             }
@@ -341,6 +359,51 @@ mod tests {
                 ("ana", "back", 1),
             ],
             "a run keeps its last word and says how many it stands for"
+        );
+    }
+
+    #[test]
+    fn the_step_that_freed_an_ask_names_who_was_waiting() {
+        let st = state(&[
+            ev("say", "x", &at(17, 12), "ana", json!({"text":"X"})),
+            ev(
+                "ask",
+                "x",
+                &at(17, 13),
+                "ana",
+                json!({"to":"felix","text":"A or B?"}),
+            ),
+            ev("say", "x", &at(17, 14), "felix", json!({"text":"B"})),
+            // a second round on the same item, asked by somebody else
+            ev(
+                "ask",
+                "x",
+                &at(17, 15),
+                "ben",
+                json!({"to":"felix","text":"and C?"}),
+            ),
+            ev("say", "x", &at(17, 16), "felix", json!({"text":"no"})),
+        ]);
+        let steps = day(
+            &st,
+            NaiveDate::from_ymd_opt(2026, 9, 17).unwrap(),
+            "me",
+            &[],
+        );
+        let pairs: Vec<(&str, Option<&str>)> = steps
+            .iter()
+            .map(|s| (s.word.as_str(), s.answers.as_deref()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                ("opened", None),
+                ("asked", None),
+                ("answered", Some("ana")),
+                ("asked", None),
+                ("answered", Some("ben")),
+            ],
+            "each answer names the one who asked it, not the last asker on the item"
         );
     }
 
