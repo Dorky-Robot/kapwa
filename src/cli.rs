@@ -450,9 +450,13 @@ pub async fn run(raw: Vec<String>) -> i32 {
                     // are not, and an invitation is the way in
                     let p = crate::config::home().join(".config/kapwa/enroll");
                     let Ok(s) = std::fs::read_to_string(&p) else {
+                        // the node writes this when it starts, so its absence
+                        // means no node runs here — you are somewhere else, and
+                        // somewhere else needs somebody to vouch for you
                         return Err(Fail::Who(format!(
-                            "not on the node's machine (no {}). ask someone here to run `kapwa invite <name>` \
-                             and redeem it with `kapwa join --with <invite> --url <node>`",
+                            "no node runs on this machine ({} is not there), so there is nothing here to \
+                             prove you belong to. ask someone on the node's machine to run \
+                             `kapwa invite <name>`, then `kapwa join --with <invitation> --url <node>`",
                             p.display()
                         )));
                     };

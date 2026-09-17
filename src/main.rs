@@ -157,6 +157,11 @@ async fn serve() -> anyhow::Result<()> {
         .init();
 
     let cfg = Config::from_env()?;
+    // made now, not on the first join: it is a property of the node existing,
+    // and lazily creating it meant the first honest `kapwa join` on a machine
+    // was told it was not on that machine — the client reads the file, so it
+    // failed before reaching the server that would have written it
+    join::enroll_secret(&cfg);
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], cfg.port));
     let app = App::new(cfg);
     tracing::info!(
