@@ -163,7 +163,7 @@ pub async fn callback(
     }
     match finish(&app, &jar, back).await {
         Ok(session) => {
-            let jar = jar.remove(Cookie::from(PENDING)).add(crumb(
+            let jar = jar.remove(gone(PENDING)).add(crumb(
                 &app,
                 SESSION,
                 serde_json::to_string(&session).unwrap_or_default(),
@@ -175,7 +175,7 @@ pub async fn callback(
             tracing::warn!("sign-in did not complete: {e:#}");
             (
                 StatusCode::UNAUTHORIZED,
-                jar.remove(Cookie::from(PENDING)),
+                jar.remove(gone(PENDING)),
                 format!("sign-in failed: {e}"),
             )
                 .into_response()
@@ -242,7 +242,7 @@ async fn finish(app: &App, jar: &PrivateCookieJar, back: Returned) -> Result<Ses
 /// Going to `/` would bounce to the provider, which still has its own
 /// session and would return you silently: a logout that does nothing.
 pub async fn logout(jar: PrivateCookieJar) -> impl IntoResponse {
-    (jar.remove(Cookie::from(SESSION)), Redirect::to("/auth/bye"))
+    (jar.remove(gone(SESSION)), Redirect::to("/auth/bye"))
 }
 
 pub async fn bye(State(app): State<App>) -> Response {
@@ -273,6 +273,15 @@ pub async fn bye(State(app): State<App>) -> Response {
         .into_string(),
     )
     .into_response()
+}
+
+/// A cookie is identified by its name *and its path*, so a removal that does
+/// not name the path it was set on clears nothing: the browser keeps the one
+/// at `/` and the person stays signed in. Every removal goes through here.
+fn gone(name: &'static str) -> Cookie<'static> {
+    let mut c = Cookie::from(name);
+    c.set_path("/");
+    c
 }
 
 fn crumb(app: &App, name: &'static str, value: String, secs: i64) -> Cookie<'static> {

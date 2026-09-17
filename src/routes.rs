@@ -623,6 +623,52 @@ mod tests {
         );
     }
 
+    /// A session lives in a cookie set at `Path=/`. A removal that does not
+    /// say the same path leaves that cookie in place, and the next visit is
+    /// still signed in — which is exactly what happened.
+    #[tokio::test]
+    async fn signing_out_removes_the_session_cookie_at_the_path_it_was_set_on() {
+        use axum_extra::extract::cookie::{Cookie, PrivateCookieJar};
+        let tmp = tempfile::tempdir().unwrap();
+        let app = app(tmp.path());
+
+        // a session cookie, exactly as a completed sign-in leaves one
+        let mut c = Cookie::new("_kapwa_session", r#"{"subject":"s","name":"someone"}"#);
+        c.set_path("/");
+        let jar: PrivateCookieJar = PrivateCookieJar::new(app.key.clone()).add(c);
+        let set = jar.into_response();
+        let sent: String = set
+            .headers()
+            .get_all(axum::http::header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().split(';').next().unwrap().to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+
+        let req = Request::get("/auth/logout")
+            .header("cookie", &sent)
+            .body(Body::empty())
+            .unwrap();
+        let resp = router(app.clone()).oneshot(req).await.unwrap();
+        let removal: Vec<String> = resp
+            .headers()
+            .get_all(axum::http::header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .filter(|v| v.starts_with("_kapwa_session="))
+            .collect();
+        assert_eq!(removal.len(), 1, "sign-out must clear the session cookie");
+        let removal = &removal[0];
+        assert!(
+            removal.contains("Path=/"),
+            "removal needs the path it was set on: {removal}"
+        );
+        assert!(
+            removal.contains("Max-Age=0") || removal.contains("Expires=Thu, 01 Jan 1970"),
+            "removal must expire it: {removal}"
+        );
+    }
+
     #[tokio::test]
     async fn signing_out_lands_somewhere_that_does_not_sign_you_back_in() {
         let tmp = tempfile::tempdir().unwrap();
