@@ -688,7 +688,7 @@ fn blank<'a>(s: &'a str, d: &'a str) -> &'a str {
 
 /// The page listens for changes instead of asking for them. Still read-only:
 /// it fetches this same page and swaps the body, and never writes anything.
-const LIVE_JS: &str = r#"
+pub(crate) const LIVE_JS: &str = r#"
 (function () {
   var dot = document.getElementById('live'), es;
   function say(t, cls) { dot.textContent = t; dot.className = cls || ''; }

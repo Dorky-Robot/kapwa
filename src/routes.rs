@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use crate::auth::{Caller, Kind, Who};
 use crate::board::{clean_topic, verb};
 use crate::log::Event;
-use crate::{oidc, render, App};
+use crate::{oidc, render, try_ui, App};
 
 pub fn router(app: App) -> Router {
     Router::new()
@@ -48,6 +48,10 @@ pub fn router(app: App) -> Router {
         .route("/api/stats.txt", get(stats_txt))
         .route("/api/topics", get(topics_in_use))
         .route("/api/live", get(live))
+        // a sandbox, until one of them is picked
+        .route("/try/", get(|s, c| try_page(s, c, "index")))
+        .route("/try/constellation", get(|s, c| try_page(s, c, "c")))
+        .route("/try/rail", get(|s, c| try_page(s, c, "r")))
         .fallback(|| async {
             (
                 StatusCode::NOT_FOUND,
@@ -469,6 +473,23 @@ async fn item(State(app): State<App>, caller: Caller, Path(id): Path<String>) ->
         Ok(None) => bad(StatusCode::NOT_FOUND, "no such item"),
         Err(e) => bad(StatusCode::CONFLICT, &e),
     }
+}
+
+/// Ways of looking at the same fold, to be chosen by seeing them. Behind
+/// the same door as the board: it is the same data.
+async fn try_page(State(app): State<App>, caller: Caller, which: &'static str) -> Response {
+    if let Err(r) = caller.allow(&[Kind::Agent, Kind::User]) {
+        return r;
+    }
+    Html(
+        match which {
+            "c" => try_ui::constellation(&app),
+            "r" => try_ui::rail(&app),
+            _ => try_ui::index(&app),
+        }
+        .into_string(),
+    )
+    .into_response()
 }
 
 /// What just happened, newest first. An agent coming back after a while

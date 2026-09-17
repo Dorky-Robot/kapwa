@@ -12,11 +12,13 @@ mod auth;
 mod board;
 mod cli;
 mod config;
+mod day;
 mod log;
 mod oidc;
 mod puller;
 mod render;
 mod routes;
+mod try_ui;
 
 use std::sync::{Arc, Mutex, RwLock};
 
