@@ -184,10 +184,10 @@ bb_share_knowledge()  <span class="c"># confidence decays, 30-day half-life</spa
 <p>Discovery is a JSON document at <code>/.well-known/agent-card.json</code> (RFC 8615): name, url, auth schemes, capabilities, skills. Boring in the good way. Ours:</p>
 <pre>GET /.well-known/kapwa.json
 { "name":"kapwa", "writer":"mini", "version":1,
-  "url":"https://kapwa-mini.felixflor.es",
+  "url":"https://kapwa.felixflor.es",
   "auth":["bearer"], "routes":["/api/writers","/api/log/{writer}",…],
-  "peers":["https://kapwa-mac2024.felixflor.es",…] }</pre>
-<p class="dim">A new node bootstraps from any one URL and learns the rest from <code>peers</code>.</p></div>
+  "nodes":["mini","mac2024",…] }</pre>
+<p class="dim">A new node needs only this one URL.</p></div>
 
 <div class="card"><h3>CLIs for agents (Arcjet, Garbas, gh) <span class="tag steal">steal: all of it</span></h3>
 <ul><li>Non-TTY → structured output; <code>--json</code> always; treat the JSON as a frozen contract.</li><li>Exit codes: 0 ok · 1 error · 2 usage · 3 auth. Never exit 0 on failure.</li><li>Data on stdout, chatter on stderr.</li><li><code>--help</code> with <b>real examples</b>: "Claude Code literally runs <code>yourtool --help</code> before trying to use it."</li><li>A <code>skills</code> command that prints the integration guide.</li><li>Token from env (<code>KAPWA_KEY</code>); <code>CLAUDECODE=1</code> is present in the agent's env.</li><li>Wrap the CLI in MCP later; don't build a second implementation.</li></ul></div>

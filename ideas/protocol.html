@@ -226,7 +226,7 @@ POST /api/event, bad key:  HTTP 401
 <h3>The ladder — take a rung only when the one below hurts</h3>
 <table>
 <tr><th></th><th>step</th><th>what it buys</th><th>cost</th></tr>
-<tr><td>1</td><td><b>Topology by collective.</b> Machines pull their collective's always-on node; hubs pull the hubs they work with. Each leaf lists two upstreams so a hub is never a single point of failure.</td><td>≈ N edges instead of N². Cross-collective edges exist only where there's a relationship</td><td>Config only. Works with today's binary</td></tr>
+<tr><td>1 <span class="tag done">done</span></td><td><b>Topology by collective.</b> Machines pull their collective's always-on node; hubs pull the hubs they work with. Each leaf lists two upstreams so a hub is never a single point of failure.</td><td>≈ N edges instead of N². Cross-collective edges exist only where there's a relationship</td><td>Config only. Works with today's binary</td></tr>
 <tr><td>2</td><td><b>Make an idle edge nearly free.</b> <code>/api/writers</code> answers with an <code>ETag</code> of the seq vector (304 when nothing changed), and accepts <code>?wait=25</code>: the request is held until something lands</td><td>Idle cost ≈ one tiny request per 25 s per edge; propagation drops from "up to 5 s per hop" to a round trip. Still pull, still <code>curl</code></td><td>~40 lines in the node</td></tr>
 <tr><td>3</td><td><b>Pull only what you may see</b> (decision Y1): across a boundary, only events addressed to you</td><td>Cross-collective traffic becomes tiny and the seq vector stays short</td><td>A filter on two routes</td></tr>
 <tr><td>4</td><td><b>Random k upstreams + peer exchange</b> inside a very large collective: each node pulls k ≈ 3 peers learned from <code>/.well-known/kapwa.json</code></td><td>Classic epidemic gossip: N·k edges, everything everywhere in O(log N) rounds, no hub at all</td><td>Small; only if one collective ever has dozens of machines</td></tr>
@@ -261,16 +261,16 @@ POST /api/event, bad key:  HTTP 401
 <tr><td><b>comes and goes, unreachable</b></td><td>a phone, a browser tab, an ESP32 on someone's Wi-Fi, a laptop in a café</td><td><b>no</b> — nothing can connect <i>in</i></td><td>it <b>publishes its own log</b> to any reachable peer, and pulls everything else as usual</td></tr>
 </table>
 <div class="side">
-<div class="card lean"><h3>The one addition: an author may publish its own events <span class="tag lean">D19</span></h3>
-<p>Pull can't reach a phone. So a node may <code>POST</code> its <i>own</i> signed events to a peer. No new route and no new trust:</p>
-<pre>POST /api/event
-<span class="c"># unsigned, from localhost  → this node signs it as its own</span>
-<span class="c"># signed by its author      → verified, stored in the</span>
-<span class="c">#                             author's log, then relayed</span></pre>
-<ul><li><b>Safe because of signatures</b> (already decided): a peer can store an author's events but can't forge or alter them, so it doesn't matter <i>who</i> delivered them.</li>
-<li><b>Same ingest rule as mirrors:</b> only the next <code>seq</code> is accepted; on a gap the peer answers "I have up to N" and the author resends from N+1. Idempotent; safe to retry forever.</li>
-<li><b>Any peer will do.</b> Publish to whichever is reachable; peers pull each other. No primary, nothing to fail over.</li>
-<li>This is nostr's model exactly: clients publish signed events to relays. It's why the laptop stops needing a tunnel at all.</li></ul></div>
+<div class="card lean"><h3>Sync is two-way over one outbound connection <span class="tag done">built</span></h3>
+<p>Pull can't reach a phone. So whoever opens the connection does both halves: it pulls what it lacks, then <b>hands over</b> what the other side lacks.</p>
+<pre>GET  /api/writers            <span class="c"># what do you have?</span>
+GET  /api/log/&lt;w&gt;?since=N    <span class="c"># give me what I lack</span>
+POST /api/log/&lt;w&gt;  [lines]   <span class="c"># here is what you lack</span>
+→ {"wrote": 2, "have": 412}</pre>
+<ul><li><b>One rule both ways:</b> only the next <code>seq</code> is written; on a gap the receiver answers what it <code>have</code>s and the sender resumes there. Idempotent; safe to retry forever.</li>
+<li><b>Any reachable node will do.</b> No primary, nothing to fail over.</li>
+<li><b>Trust today</b> is the mesh token, the same trust a pull already extends. Once events are <a href="identity.html">signed</a> it becomes per-author: a peer can store your events but never forge them, so it stops mattering who delivered them.</li>
+<li>This is nostr's shape: clients publish to a relay. It's why the laptops need no hostname.</li></ul></div>
 <div class="card"><h3>Why this is the fault-tolerant shape</h3>
 <table><tr><th>failure</th><th>what happens</th></tr>
 <tr><td>phone offline for a day</td><td>keeps writing to its own log; publishes 30 events on reconnect; nobody noticed</td></tr>
@@ -288,7 +288,17 @@ POST /api/event, bad key:  HTTP 401
 <ul class="pros"><li>Direct iroh connections: fast file transfer, local discovery without internet</li><li>The same code as every other node</li></ul>
 <ul class="cons"><li>An app to build, sign and ship</li><li>iOS suspends background apps: it still can't be an always-on peer</li><li>Worth it when phone-to-phone transfers or streaming matter; not before</li></ul></div>
 </div>
-<p class="dim">Laptops get simpler too: with publish-your-own, mac2024 and mac2019 no longer need their <code>kapwa-&lt;box&gt;</code> routes to take part. Only always-on nodes need to be reachable.</p>
+<h3 id="address">One address, then peer to peer</h3>
+<div class="side">
+<div class="card lean"><h3>What's true today <span class="tag done">running</span></h3>
+<p><code>kapwa.felixflor.es</code> is the mesh's only address. It points at the mini, which has <i>no peers configured</i>. mac2024 and mac2019 have no hostnames; they reach out. It's also the collective's public face: one address for other collectives, one sign-in callback for people.</p>
+<p>This is how the grown-up meshes do it: Tailscale's coordination server and relays, Syncthing's discovery server, BitTorrent and IPFS bootstrap nodes, a nostr relay URL. One stable rendezvous; it doubles as the relay of last resort.</p></div>
+<div class="card"><h3>What "peer to peer thereafter" means, honestly</h3>
+<ul><li><b>Today the gateway relays.</b> It stores and forwards every log, so two laptops converge through it. That is robust and simple, and it isn't direct.</li>
+<li><b>Direct connections need NAT traversal</b>, and that is <a href="bytes.html">the mover's</a> job, not kapwa's: it can hand kapwa a local port that is really another node, dialed by key over iroh. kapwa keeps speaking plain HTTP and never knows.</li>
+<li><b>The gateway then shrinks to discovery</b> (who is in the mesh, how to dial them) plus fallback. Lose it and nodes that already know each other keep syncing.</li>
+<li><b>More than one gateway is cheap:</b> any always-on node can answer the same name, since every node mirrors everything.</li></ul></div>
+</div>
 
 <h2 id="protocol">What makes it a protocol, not an app</h2>
 <div class="grid g2">

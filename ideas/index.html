@@ -7,15 +7,15 @@
 <p class="lede">One process per machine. Agents talk to the node on their own machine; nodes pull each other's logs; people read one board. kita is what a collective <i>knows</i>; kapwa is what collectives <i>owe each other</i>. This site is the design sandbox: the current position, the reasoning behind it, and every open question in one place.</p>
 
 <div class="status">
-  <div class="card"><div class="dim">nodes live</div><div class="big">4</div><div class="dim">mini · mac2024 · mac2019 · doug-mini</div></div>
+  <div class="card"><div class="dim">nodes live</div><div class="big">3</div><div class="dim">mini · mac2024 · mac2019</div></div>
   <div class="card"><div class="dim">binary</div><div class="big">5.2 MB</div><div class="dim">Rust, static, no runtime deps</div></div>
-  <div class="card"><div class="dim">replication</div><div class="big">pull</div><div class="dim">every 5 s, backoff to 5 m</div></div>
+  <div class="card"><div class="dim">addresses</div><div class="big">1</div><div class="dim">kapwa.felixflor.es; leaves reach out</div></div>
   <div class="card"><div class="dim">open questions</div><div class="big">5 + 20</div><div class="dim"><a href="decisions.html">5 your call · 20 defaults to confirm</a></div></div>
 </div>
 
 <h2>Where we stand, in ten lines</h2>
 <ol>
-<li><b>Every writer owns one append-only log</b>; nodes pull each other by <code>seq</code>; the board is a deterministic fold. <a href="protocol.html">protocol</a></li>
+<li><b>Every writer owns one append-only log</b>; nodes sync by <code>seq</code>, both ways over one outbound connection, so a mesh needs <b>one address</b>; the board is a deterministic fold. <a href="protocol.html">protocol</a></li>
 <li><b>The whole protocol fits on an index card</b>, and day one is four verbs: <code>say · take · drop · done</code>, plus <code>ask</code>. Everything else is an optional convention. <a href="protocol.html#card">the card</a></li>
 <li><b>It is a protocol, not an app</b>: test vectors are the contract; Rust is the reference, with shell, TypeScript and C implementations expected. <a href="protocol.html#protocol">why</a></li>
 <li><b>kita and kapwa are complements and never overlap</b>. One question sorts any feature: is it about what we know, or what we owe? <a href="collectives.html#treaty">the treaty</a></li>
@@ -29,34 +29,26 @@
 
 <h2>The mesh as it runs today</h2>
 <figure>
-<svg viewBox="0 0 760 340" role="img" aria-label="mesh topology">
+<svg viewBox="0 0 760 300" role="img" aria-label="mesh topology">
   <defs><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#27c"/></marker></defs>
-  <!-- nodes -->
-  <g><rect class="node" x="60" y="40" width="200" height="70" rx="8"/><text class="svgt" x="75" y="65">mini</text><text class="svgd" x="75" y="83">kapwa-mini.felixflor.es · always on</text><text class="svgd" x="75" y="98">dashboard · id.felixflor.es</text></g>
-  <g><rect class="node laptop" x="500" y="40" width="200" height="70" rx="8"/><text class="svgt" x="515" y="65">mac2024</text><text class="svgd" x="515" y="83">kapwa-mac2024.felixflor.es · laptop</text><text class="svgd" x="515" y="98">flaps on Wi-Fi · replicate-first</text></g>
-  <g><rect class="node laptop" x="60" y="230" width="200" height="70" rx="8"/><text class="svgt" x="75" y="255">mac2019</text><text class="svgd" x="75" y="273">kapwa-mac2019.felixflor.es · Intel</text><text class="svgd" x="75" y="288">x86_64 cross-build from mac2024</text></g>
-  <g><rect class="node" x="500" y="230" width="200" height="70" rx="8"/><text class="svgt" x="515" y="255">doug-mini</text><text class="svgd" x="515" y="273">another collective's node</text><text class="svgd" x="515" y="288">paused for now</text></g>
-  <!-- pulls (each direction) -->
-  <path class="arrow" d="M260,65 L500,65"/><path class="arrow" d="M500,85 L260,85"/>
-  <path class="arrow" d="M150,110 L150,230"/><path class="arrow" d="M170,230 L170,110"/>
-  <path class="arrow" d="M590,110 L590,230"/><path class="arrow" d="M610,230 L610,110"/>
-  <path class="arrow" d="M260,255 L500,255"/><path class="arrow" d="M500,275 L260,275"/>
-  <path class="arrow dim" d="M250,110 L510,230"/><path class="arrow dim" d="M510,110 L250,230"/>
-  <text class="svgd" x="330" y="55">pull /api/log/&lt;writer&gt;?since=</text>
-  <text class="svgd" x="330" y="175" text-anchor="middle">every node also serves what it mirrored,</text>
-  <text class="svgd" x="330" y="190" text-anchor="middle">so a log reaches you while its author sleeps</text>
-  <!-- agents -->
-  <rect class="pill" x="300" y="300" width="160" height="26" rx="13"/><text class="svgt" x="380" y="317" text-anchor="middle">agents → 127.0.0.1:3410</text>
+  <rect x="250" y="20" width="260" height="84" rx="10" fill="#f3f0fb" stroke="#7a4bd6" stroke-width="1.4"/>
+  <text class="svgt" x="380" y="46" text-anchor="middle" font-weight="600">kapwa.felixflor.es</text>
+  <text class="svgd" x="380" y="66" text-anchor="middle">the mini · always on · the one address</text>
+  <text class="svgd" x="380" y="84" text-anchor="middle">no peers configured: it never reaches out</text>
+  <g><rect class="node laptop" x="40" y="190" width="200" height="66" rx="8"/><text class="svgt" x="55" y="214">mac2024</text><text class="svgd" x="55" y="232">laptop · no address · comes and goes</text></g>
+  <g><rect class="node laptop" x="280" y="190" width="200" height="66" rx="8"/><text class="svgt" x="295" y="214">mac2019</text><text class="svgd" x="295" y="232">Intel laptop · no address</text></g>
+  <g><rect class="node laptop" x="520" y="190" width="200" height="66" rx="8" style="stroke:#bbb"/><text class="svgt" x="535" y="214" style="fill:#999">a phone, a browser…</text><text class="svgd" x="535" y="232">next: same shape</text></g>
+  <path class="arrow" d="M140,190 L320,106"/><path class="arrow" d="M380,190 L380,106"/><path class="arrow dim" d="M620,190 L440,106"/>
+  <text class="svgd" x="150" y="150">reaches out; both directions</text><text class="svgd" x="150" y="164">ride that one connection</text>
+  <rect class="pill" x="300" y="268" width="160" height="26" rx="13"/><text class="svgt" x="380" y="285" text-anchor="middle">agents → 127.0.0.1:3410</text>
 </svg>
-<figcaption>Blue arrows are HTTPS pulls through cloudflared routes, authenticated with the shared mesh token. Dashed boxes are machines that sleep. A node that peers with only some of the others still sees every log, because each node serves what it has mirrored.</figcaption>
+<figcaption>Arrows show who opens the connection, not which way data flows: a leaf pulls what it lacks <i>and</i> hands over what the gateway lacks. Dashed boxes sleep. "Gateway" is a property (always on, reachable), not a role; every node runs the same binary.</figcaption>
 </figure>
-
-
 
 <h2>Built, and designed</h2>
 <table>
 <tr><th>running on the mesh today</th><th>designed here, not built</th></tr>
-<tr><td>per-writer logs, pull by <code>seq</code>, contiguous-only ingest<br>the fold; earliest claim wins, loser recorded<br>mesh token · agent keys · Pocket ID dashboard; fail closed<br>one static binary, cross-compiled for Intel; <code>deploy.sh</code><br>routes <code>kapwa-&lt;box&gt;.felixflor.es</code></td>
+<tr><td>per-writer logs, pull by <code>seq</code>, contiguous-only ingest<br>the fold; earliest claim wins, loser recorded<br>mesh token · agent keys · Pocket ID dashboard; fail closed<br>one static binary, cross-compiled for Intel; <code>deploy.sh</code><br>two-way sync; one address, <code>kapwa.felixflor.es</code>; leaves need none</td>
 <td>the <code>kapwa</code> CLI and its four verbs; one binary<br>events as signed nostr events; keys, names, membership<br>collectives as writers; worded tags; parcels<br><code>prime</code> + hooks; heartbeats and stale claims<br>spec pages and test vectors</td></tr>
 </table>
 

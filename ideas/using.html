@@ -108,12 +108,10 @@ more: kapwa · kapwa show &lt;id&gt; · kapwa --help</pre></div>
 <pre>{ "version": 1,
   "collective": "dorkyrobot@felixflor.es",
   "writer": "dorkyrobot/mini",
-  "url": "https://kapwa-mini.felixflor.es",
-  "peers": [
-    "https://kapwa-mac2024.felixflor.es",
-    "https://kapwa-mac2019.felixflor.es" ],
+  "url": "https://kapwa.felixflor.es",
+  "nodes": ["mini", "mac2024", "mac2019"],
   "protocol": "/api/protocol" }</pre>
-<p class="dim">A new node bootstraps from any one URL and learns the mesh from <code>peers</code>.</p></div>
+<p class="dim">One address per collective. A new node needs only this URL; it reaches out, and both directions of sync ride that connection.</p></div>
 <div class="card"><h3><code>GET /api/protocol</code> (open, text)</h3>
 <pre>kapwa · this node: dorkyrobot/mini
 
