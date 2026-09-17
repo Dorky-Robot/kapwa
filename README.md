@@ -65,6 +65,11 @@ environment variables win over the file. Variables are listed at the top of
 cases: peer down, writes while partitioned, catch-up, concurrent claim, and
 the auth boundaries.
 
+`scripts/gateway.sh` runs the shape a real mesh takes: one node with a stable
+address and no peers of its own, and two leaves that nothing can connect to.
+Sync is two-way over the leaves' outbound connections, so they converge through
+the gateway, and survive it dying.
+
 ## Deploy
 
 ```bash
@@ -82,7 +87,9 @@ The node runs as LaunchAgent `com.dorkyrobot.kapwa` →
 `~/.local/kapwa/current/kapwa serve`. Logs: `~/Library/Logs/kapwa/launchd.log`.
 The last three releases stay under `~/.local/kapwa/releases/` for rollback.
 
-Reachability is a `tunnels` route to `127.0.0.1:3410`. The dashboard needs
+Only the always-on node needs an address: one `tunnels` route
+(`kapwa.<domain>` → `127.0.0.1:3410`). Every other node lists that URL in
+`KAPWA_PEERS` and needs no route of its own. The dashboard needs
 an OIDC client in that network's Pocket ID with callback
 `<public-url>/auth/callback`; put its id/secret in the env file and
 `launchctl kickstart -k gui/$UID/com.dorkyrobot.kapwa`.

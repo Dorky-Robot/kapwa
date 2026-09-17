@@ -66,17 +66,32 @@ attempt stays in history as `claim lost to <owner>`.
 
 ```
 GET /api/writers
-→ {"mini":412,"mac2024":9,"doug-mini":3}          every log this node holds, own and mirrored
+→ {"mini":412,"mac2024":9}                  every log this node holds, own and mirrored
 
 GET /api/log/<writer>?since=<seq>
-→ [ {event}, {event}, ... ]                       events with seq > since, ascending
+→ [ {event}, {event}, ... ]                 events with seq > since, ascending
+
+POST /api/log/<writer>     [ {event}, ... ]
+→ {"ok":true,"wrote":2,"have":412}          lines handed over; same contiguous rule
 ```
 
-A puller asks each peer for `/api/writers`, and for every writer it is
-behind on, `/api/log/<writer>?since=<what I have>`. Received events are
-appended to the local mirror only if `seq` is exactly `last + 1`; a gap
-ends the batch. Peers serve their mirrors, so a log reaches you even when
-its author is offline. A node never pulls its own writer name.
+Sync is two-way over one outbound connection. A node asks a peer for
+`/api/writers`. For every writer it is behind on, it pulls
+`/api/log/<writer>?since=<what I have>`. For every writer the *peer* is behind
+on, it hands the lines over with `POST`.
+
+Either way the receiver applies one rule: a line is written only if its `seq` is
+exactly `last + 1`. A gap ends the batch; the answer says what the receiver
+`have`s, so the sender resumes from there. Idempotent in both directions. A node
+never accepts lines for its own writer name.
+
+Nodes serve and hand over the logs they mirror, not only their own, so a log
+reaches you even when its author is offline.
+
+This is what lets a node that nothing can connect *to* — a laptop, a phone,
+anything behind NAT — take full part. A mesh therefore needs only one stable
+address: the node, or nodes, that are always on. "Gateway" is a property, not a
+role; every node runs the same code.
 
 ### Agents (agent key)
 

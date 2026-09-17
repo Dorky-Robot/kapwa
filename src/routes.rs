@@ -1,6 +1,6 @@
 //! HTTP surface. Three audiences, three ways in (see `auth`):
 //!
-//!   * other nodes (mesh token)   GET /api/writers, GET /api/log/:writer
+//!   * other nodes (mesh token)   GET /api/writers, GET + POST /api/log/:writer
 //!   * agents (key from file)     POST /api/event, GET /api/board.txt, ...
 //!   * people (Pocket ID)         GET /  — the read-only dashboard
 //!
@@ -26,7 +26,7 @@ pub fn router(app: App) -> Router {
         .route("/auth/callback", get(oidc::callback))
         .route("/auth/logout", get(oidc::logout))
         .route("/api/writers", get(writers))
-        .route("/api/log/:writer", get(log))
+        .route("/api/log/:writer", get(log).post(offered))
         .route("/api/event", post(event))
         .route("/api/whoami", get(whoami))
         .route("/api/state", get(state))
@@ -99,6 +99,41 @@ async fn log(
             .into_response();
     }
     Json(app.logs.read(&writer, q.since.unwrap_or(0))).into_response()
+}
+
+/// A peer hands us lines we are behind on: its own log, or one it mirrors.
+/// Same rule as a pull — only the next contiguous seq is accepted — so a
+/// node that nothing can connect to takes part by reaching out.
+async fn offered(
+    State(app): State<App>,
+    caller: Caller,
+    Path(writer): Path<String>,
+    Json(lines): Json<Vec<Event>>,
+) -> Response {
+    if let Err(r) = caller.allow(&[Kind::Mesh]) {
+        return r;
+    }
+    if !crate::log::valid_name(&writer) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error":"bad writer name"})),
+        )
+            .into_response();
+    }
+    match app.logs.ingest(&writer, &lines) {
+        Ok(n) => {
+            if n > 0 {
+                app.refresh_board();
+            }
+            Json(json!({"ok": true, "wrote": n, "have": app.logs.last_seq(&writer)}))
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::CONFLICT,
+            Json(json!({"error": e, "have": app.logs.last_seq(&writer)})),
+        )
+            .into_response(),
+    }
 }
 
 // ── agents ─────────────────────────────────────────────────────────
@@ -245,6 +280,65 @@ mod tests {
                 .await
                 .0,
             StatusCode::OK
+        );
+    }
+
+    fn line(writer: &str, seq: u64) -> Value {
+        json!({"kind":"note","id":"x","writer":writer,"seq":seq,"by":writer,
+               "at":format!("2026-09-17T10:00:0{seq}.000Z")})
+    }
+
+    #[tokio::test]
+    async fn a_peer_may_hand_over_lines_under_the_same_rule_as_a_pull() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = app(tmp.path());
+        let post = |tok: &str, w: &str, body: Value| post_req(&format!("/api/log/{w}"), tok, body);
+        // contiguous lines land
+        let (st, body) = call(
+            &app,
+            post(
+                "mesh-secret",
+                "leaf",
+                json!([line("leaf", 1), line("leaf", 2)]),
+            ),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK);
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            (v["wrote"].as_u64(), v["have"].as_u64()),
+            (Some(2), Some(2))
+        );
+        // handed over again: nothing written, nothing broken
+        let (_, body) = call(
+            &app,
+            post(
+                "mesh-secret",
+                "leaf",
+                json!([line("leaf", 1), line("leaf", 2)]),
+            ),
+        )
+        .await;
+        assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["wrote"], 0);
+        // a gap is not written, and the answer says where to resume
+        let (_, body) = call(&app, post("mesh-secret", "leaf", json!([line("leaf", 5)]))).await;
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            (v["wrote"].as_u64(), v["have"].as_u64()),
+            (Some(0), Some(2))
+        );
+        // nobody hands me my own log, and an agent key is not a node
+        assert_eq!(
+            call(&app, post("mesh-secret", "test", json!([line("test", 1)])))
+                .await
+                .0,
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            call(&app, post("claude-key", "leaf", json!([line("leaf", 3)])))
+                .await
+                .0,
+            StatusCode::FORBIDDEN
         );
     }
 
