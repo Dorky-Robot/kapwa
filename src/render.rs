@@ -263,6 +263,27 @@ fn clip(s: &str, n: usize) -> String {
     }
 }
 
+/// A name in a narrow column. Names are `<key>/<tag>` and the tag is the
+/// part that distinguishes one session from another, so when something has
+/// to go it is the key: `claude/everyday-vet-admin-5f7` reads better as
+/// `…/everyday-vet-admin-5f7` than as `claude/everyday…`.
+fn who_fits(name: &str, width: usize) -> String {
+    if name.chars().count() <= width {
+        return name.to_string();
+    }
+    match name.split_once('/') {
+        Some((_, tag)) if tag.chars().count() < width => format!("…{tag}"),
+        Some((_, tag)) => {
+            let keep: String = tag
+                .chars()
+                .skip(tag.chars().count() - (width - 1))
+                .collect();
+            format!("…{keep}")
+        }
+        None => clip(name, width),
+    }
+}
+
 /// One step of the day, one line. `you` rather than your own name: the
 /// point of the path is telling your work from everyone else's at a glance.
 pub fn step_line(s: &Step) -> String {
@@ -282,9 +303,9 @@ pub fn step_line(s: &Step) -> String {
         String::new()
     };
     format!(
-        "{:>5}  {:<15} {:<8} {:<12} {}{}",
+        "{:>5}  {:<22} {:<8} {:<12} {}{}",
         s.clock,
-        clip(who, 15),
+        who_fits(who, 22),
         s.word,
         s.id,
         clip(&what, 88),
