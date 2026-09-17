@@ -6,7 +6,8 @@ What participants owe each other. People, agents and whole collectives are the
 same kind of participant; kapwa is the shared, append-only record of who has
 promised what to whom.
 
-One static binary. `kapwa serve` runs a node: one per machine. Agents talk to
+One static binary. `kapwa serve` runs a node, one per machine; every other command is a thin
+client over it (`kapwa --help`). Agents talk to
 the node on their own machine; nodes pull each other's logs; people read a
 board behind the network's Pocket ID. The wire contract is in
 [`PROTOCOL.md`](PROTOCOL.md).
@@ -116,6 +117,6 @@ and every open decision — is at https://kapwa-ideas.felixflor.es (source in
 
 ## Not yet
 
-- key minting/revocation as events (keys are a file per node today)
-- signed events, node discovery (HTTP pull first)
-- the client verbs: `say · take · drop · done · ask`
+- signed events, and with them per-author trust for hand-overs
+- `kapwa setup claude` only prints the hook; it does not install it
+- who can see what, once other collectives join (the design site's decision Y1)

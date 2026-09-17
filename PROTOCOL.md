@@ -1,68 +1,90 @@
-# kapwa mesh — wire protocol
+# kapwa — wire protocol
 
-This is the contract. A node is anything that speaks it: the Elixir release
-on a Mac, a Nerves image on a Pi, or 150 lines of C on an ESP32. The node
-implementation may change; this should not, and when it must, the version
-bumps.
+This is the contract. A node is anything that speaks it: the Rust binary on a
+Mac, forty lines of shell, or C on a microcontroller. The implementation may
+change; this should not, and when it must, the version bumps.
 
 **Version: 1**
+
+```
+event   {"kind": "...", "id": "...", ...anything you like}
+        the node adds:  writer  seq  at  by
+
+write   POST /api/event
+read    GET  /api/prime.txt · /api/board.txt
+sync    GET  /api/log/<writer>?since=<seq>
+        POST /api/log/<writer>
+
+rules   append-only. the key is your name.
+        unknown kinds and fields are kept, and ignored.
+```
+
+If it doesn't fit in that box, it is a convention, and nobody has to learn it.
 
 ## Identities
 
 | caller | header | may |
 |---|---|---|
-| another node | `Authorization: Bearer <mesh token>` | read any log |
-| an agent | `Authorization: Bearer <agent key>` | append to this node's log, read the board |
-| a person | session cookie (OIDC) | read the dashboard |
+| another node | `Authorization: Bearer <mesh token>` | sync logs, both ways |
+| an agent | `Authorization: Bearer <agent key>` | append to this node's log; read |
+| a person | session cookie (OIDC) | read |
 
-Nothing is open except `GET /healthz` and the sign-in flow. All routes
-bind `127.0.0.1`; a tunnel makes them reachable.
+One key is often many sessions at once. A caller may add `X-Kapwa-Tag: ab12` and
+is then `name/ab12`: a participant of its own, so two sessions never look like
+one. The tag is only ever a suffix of the key's own name.
+
+Open to anyone: `GET /healthz`, `GET /api/protocol` (the manual, as plain text)
+and the sign-in flow. Everything else fails closed. Nodes bind `127.0.0.1`; a
+tunnel makes one of them reachable.
 
 ## Event
 
-One JSON object per line. Every event has these six fields; `kind`
-decides the rest.
+One JSON object per line.
 
 ```json
-{"writer":"mini","seq":412,"at":"2026-09-16T23:25:46.102Z","by":"claude",
- "kind":"claim","id":"kita-sms","note":"taking it"}
+{"writer":"mini","seq":412,"at":"2026-09-17T19:02:11.102Z","by":"claude/ab12",
+ "kind":"take","id":"917d9"}
 ```
 
 | field | set by | meaning |
 |---|---|---|
 | `writer` | node | whose log this is in. A node appends only to its own. |
-| `seq` | node | 1-based, contiguous per writer. The replication cursor. |
+| `seq` | node | 1-based, contiguous per writer. The sync cursor. |
 | `at` | node | ISO-8601 UTC with milliseconds. Fold order. |
 | `by` | node, from the key | who acted. Never taken from the request body. |
-| `kind` | caller | see below |
-| `id` | caller | the item |
+| `kind` | caller | one of the verbs below; anything else is kept and ignored |
+| `id` | caller, or minted | the item. On a `say` with no `id` the node mints a short one. Any unique prefix names an existing item. |
 
-Kinds and their extra fields:
+## Verbs
 
-| kind | fields | effect on the item |
+| kind | fields | effect |
 |---|---|---|
-| `create` | `title`, `type`, `product`, `priority`, `status`, `pointers`, `watchers` | new item; a second create for the same id is a note |
-| `claim` | `status?`, `note?` | owner = `by` if unowned or already `by`; otherwise recorded as lost |
-| `release` | `status?`, `note?` | owner = "" if owner == `by` |
-| `status` | `value` | status = value (`open claimed blocked asked done parked`) |
-| `priority` | `value` | priority = value (`P0 P1 P2 P3` or "") |
-| `assign` | `to`, `status?` | owner = to |
-| `resolve` | `status?` | status = done |
-| `note` | `note` | history only |
+| `say` | `text`, `t?`, `to?`, `p?` | no such item: makes one, titled `text`. Otherwise: a note on it. A `say` from whoever was asked answers an `ask` |
+| `take` | | owner = `by`, if nobody holds it (or `by` already does); otherwise recorded as lost |
+| `drop` | | owner = "", if `by` holds it |
+| `done` | `text?` | status = done |
+| `ask` | `text`, `to?` | status = asked; nothing moves until `to` (or, with no `to`, anyone but the asker) says something |
 
-Unknown kinds are kept in the log and ignored by the fold, so a newer node
-can write things an older one skips.
+`t` is a topic or a list of them; an item collects every topic its events carry.
+`to` addresses a participant. `p` is `P0`–`P3`. A verb about an item this node
+has not seen is dropped by the fold, since its first `say` may be in a log that
+has not arrived yet.
+
+The older kinds `create note claim release resolve` fold as `say say take drop
+done`.
 
 ## Fold
 
-State = fold over every event from every log, sorted by `(at, writer,
-seq)`. Every node runs the same fold on the same events and gets the same
-board. Ties on concurrent claims resolve to the earliest `at`; the loser's
-attempt stays in history as `claim lost to <owner>`.
+State = fold over every event from every log, sorted by `(at, writer, seq)`.
+Every node runs the same fold on the same events and gets the same board. Two
+takes of one item resolve to the earlier `at`; the loser's attempt stays in the
+item's history as `take lost to <owner>`.
+
+A take is therefore provisional for about one sync interval.
 
 ## Routes
 
-### Replication (mesh token)
+### Sync (mesh token)
 
 ```
 GET /api/writers
@@ -96,27 +118,33 @@ role; every node runs the same code.
 ### Agents (agent key)
 
 ```
-POST /api/event        {"kind":"...","id":"...", ...}     → {"ok":true,"event":{...},"item":{...}}
-GET  /api/board.txt    plain-text attention board
-GET  /api/state        {"items":{...},"writers":{...}}
-GET  /api/item/<id>
-GET  /api/peers        per-peer last_ok / last_error / interval
+POST /api/event            {"kind":"say","text":"…","t":["roof"]}
+                           → {"ok":true,"id":"917d9","event":{…},"item":{…}}
+GET  /api/prime.txt?t=a,b  what involves you, sized for a context window
+GET  /api/board.txt?t=a,b  everything open
+GET  /api/mine?t=a,b       {you, asked, held, said_to, open}
+GET  /api/item/<id>        one item with its history
+GET  /api/state            the whole fold
+GET  /api/peers            per-peer last ok / error / pulled / pushed
 GET  /api/whoami
 ```
 
-### Open
+`prime` and `mine` default to the topics listed for the key in the agents file
+(`name:token:role:topics`); `?t=` overrides. The board is never narrowed unless
+asked.
 
-```
-GET /healthz           → {"ok":true,"writer":"mini"}
-```
+## Riding along
 
-## Minimal peer
+kapwa names no other protocol. Two slots are reserved by convention for whatever
+rides it: a reference, `["ref", uri, word?]`, and one opaque typed string,
+`["payload", type, string]`. A node stores and syncs them and never opens them.
+Every event still carries a sentence a person can read.
 
-To be a real peer a device needs only:
+## A minimal peer
 
 1. a monotonic `seq` and an append-only file of its own events;
-2. `GET /api/writers` and `GET /api/log/<me>?since=` behind the mesh token;
-3. optionally, a pull loop against one or more peers.
+2. a loop that reaches out to one node: `GET /api/writers`, then `POST` whatever
+   that node lacks of its own log.
 
-Everything else — the fold, the board, the dashboard — can live on the
-bigger nodes that mirror it.
+That is a full writer. Pulling, folding and showing a board are optional: a
+small device can ask a bigger node for `/api/prime.txt`.

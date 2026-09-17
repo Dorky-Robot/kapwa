@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Two nodes on one laptop, pulling each other. Exercises the failure cases:
+# (raw HTTP on purpose: this is what a client in any language sends)
 # a peer down, writes while partitioned, catch-up on return, a concurrent
 # claim that has to lose on both sides the same way, and the auth edges.
 set -euo pipefail
@@ -37,8 +38,8 @@ PB=$(start grok@b $PB_ $A)
 until_up $A; until_up $B
 
 say "2. A creates + claims an item; B has not seen it yet"
-post $A $KEY_A '{"kind":"create","id":"fence-quote","title":"Get a second quote for the fence","priority":"P1"}'
-post $A $KEY_A '{"kind":"claim","id":"fence-quote","note":"taking it"}'
+post $A $KEY_A '{"kind":"say","id":"fence-quote","text":"Get a second quote for the fence","p":"P1"}'
+post $A $KEY_A '{"kind":"take","id":"fence-quote"}'
 board $B | head -3
 
 say "   ...after one pull cycle B has it"
@@ -47,8 +48,8 @@ board $B
 
 say "3. kill A. B keeps working: reads its mirror, writes its own log"
 kill $PA; wait $PA 2>/dev/null || true
-post $B $KEY_B '{"kind":"create","id":"roof-leak","title":"Roof leaks over the back door","priority":"P0"}'
-post $B $KEY_B '{"kind":"note","id":"fence-quote","note":"grok: first quote was 900"}'
+post $B $KEY_B '{"kind":"say","id":"roof-leak","text":"Roof leaks over the back door","p":"P0"}'
+post $B $KEY_B '{"kind":"say","id":"fence-quote","text":"first quote was 900"}'
 pull 7
 board $B
 
@@ -58,10 +59,10 @@ until_up $A; pull
 board $A
 
 say "5. concurrent claim: B claims roof-leak, A claims it 1s later, before either has pulled"
-post $B $KEY_B '{"kind":"claim","id":"roof-leak"}'
+post $B $KEY_B '{"kind":"take","id":"roof-leak"}'
 sleep 1
-post $A $KEY_A '{"kind":"claim","id":"roof-leak"}'
-echo "   A, before pulling, thinks it owns roof-leak:"
+post $A $KEY_A '{"kind":"take","id":"roof-leak"}'
+echo "   A, right after its own take (sync is two-way now, so it may already know better):"
 curl -s "${AUTH[@]}" $A/api/item/roof-leak | grep -o '"owner":"[^"]*"'
 pull
 echo "   A, after pulling, agrees with B — earliest claim wins on both sides:"

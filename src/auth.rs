@@ -2,8 +2,11 @@
 //!
 //! - `Mesh`: another node, presenting the shared `KAPWA_MESH_TOKEN`.
 //!   May read logs to replicate. Never writes.
-//! - `Agent`: a key from the agents file (`name:token:role:products`).
-//!   The token is the name: `by` on every event comes from it.
+//! - `Agent`: a key from the agents file (`name:token:role:topics`).
+//!   The token is the name: `by` on every event comes from it. One key is
+//!   often many sessions at once, so a caller may add `X-Kapwa-Tag: ab12`
+//!   and sign as `name/ab12`. The tag is only ever a suffix of the key's
+//!   own name, so nobody can sign as someone else.
 //! - `User`: a person, signed in through Pocket ID. Reads the dashboard.
 //!
 //! Fail closed: with no mesh token configured, no node can replicate; with
@@ -47,8 +50,17 @@ pub struct Who {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    /// the topics this key cares about, from the agents file; `*` or none
+    /// means everything
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub products: Option<Vec<String>>,
+    pub topics: Option<Vec<String>>,
+}
+
+fn valid_tag(t: &str) -> bool {
+    !t.is_empty()
+        && t.len() <= 32
+        && t.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// Extractor: `Caller(Some(who))` if the request identified itself.
@@ -65,7 +77,19 @@ impl FromRequestParts<App> for Caller {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
         {
-            return Ok(Caller(from_token(app, tok.trim())));
+            let mut who = from_token(app, tok.trim());
+            if let Some(w) = who.as_mut().filter(|w| w.kind == Kind::Agent) {
+                if let Some(tag) = parts
+                    .headers
+                    .get("x-kapwa-tag")
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::trim)
+                    .filter(|t| valid_tag(t))
+                {
+                    w.name = format!("{}/{tag}", w.name);
+                }
+            }
+            return Ok(Caller(who));
         }
         let jar = PrivateCookieJar::from_request_parts(parts, app)
             .await
@@ -74,7 +98,7 @@ impl FromRequestParts<App> for Caller {
             kind: Kind::User,
             name: s.email.unwrap_or(s.name),
             role: None,
-            products: None,
+            topics: None,
         })))
     }
 }
@@ -117,7 +141,7 @@ fn from_token(app: &App, tok: &str) -> Option<Who> {
                 kind: Kind::Mesh,
                 name: "mesh".into(),
                 role: None,
-                products: None,
+                topics: None,
             });
         }
     }
@@ -128,7 +152,7 @@ fn from_token(app: &App, tok: &str) -> Option<Who> {
 }
 
 /// Agents file, re-read per lookup so a minted key works without a
-/// restart. Lines are `name:token:role:products`; `#` starts a comment.
+/// restart. Lines are `name:token:role:topics`; `#` starts a comment.
 pub fn agents(app: &App) -> Vec<(Who, String)> {
     let Ok(body) = std::fs::read_to_string(&app.cfg.agents_file) else {
         return vec![];
@@ -141,19 +165,20 @@ pub fn agents(app: &App) -> Vec<(Who, String)> {
             let name = p.next()?.to_string();
             let token = p.next()?.to_string();
             let role = p.next().unwrap_or("worker").to_string();
-            let products = p
+            // `*` (or nothing) means every topic, which is what no list means
+            let topics: Vec<String> = p
                 .next()
                 .unwrap_or("")
                 .split(',')
-                .filter(|s| !s.is_empty())
-                .map(String::from)
+                .filter_map(crate::board::clean_topic)
+                .filter(|t| t != "*")
                 .collect();
             Some((
                 Who {
                     kind: Kind::Agent,
                     name,
                     role: Some(role),
-                    products: Some(products),
+                    topics: Some(topics),
                 },
                 token,
             ))

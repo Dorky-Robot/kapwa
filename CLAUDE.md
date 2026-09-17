@@ -26,9 +26,9 @@ participant. Coordination happens by leaving marks, not by sending messages.
    ignored. No version negotiation, ever.
 5. **No domain nouns.** No person's name, product or business term in a status,
    a field, a function or an example.
-6. **Every writer owns one log.** Nobody writes anyone else's. Replication is a
-   pull by `seq`; a node that cannot be pulled from publishes its own signed
-   events. "Hub" is a property (always on, reachable), never a role.
+6. **Every writer owns one log.** Nobody writes anyone else's. Sync is by `seq`
+   and two-way over one outbound connection, so a mesh needs one address.
+   "Gateway" is a property (always on, reachable), never a role.
 7. **Fail closed.** Nothing is open but `/healthz` and the sign-in flow.
 8. **Measure, do not assert.** A claim about cost or scale comes with the script
    that produced it.
@@ -42,11 +42,12 @@ src/config.rs   env → Config (reads ~/.config/kapwa/env itself)
 src/log.rs      per-writer logs, own seq, mirror ingest (contiguous only)
 src/board.rs    the fold
 src/puller.rs   one task per peer under a restart-on-panic supervisor
-src/auth.rs     who is asking: mesh token | agent key | session
+src/auth.rs     who is asking: mesh token | agent key (+ session tag) | sign-in
+src/cli.rs      the client half of the one binary; holds no rules of its own
 src/oidc.rs     Pocket ID sign-in
-src/render.rs   board.txt and the read-only page
+src/render.rs   prime, board, the manual, and the read-only page
 src/routes.rs   the HTTP surface
-scripts/        deploy.sh · two-node.sh (the failure cases, runnable)
+scripts/        deploy.sh · two-node.sh and gateway.sh (the failure cases, runnable)
 ideas/          the design site, static HTML
 ```
 

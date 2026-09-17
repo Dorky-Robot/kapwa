@@ -1,7 +1,7 @@
 //! kapwa — what participants owe each other.
 //!
-//! One binary. `kapwa serve` runs this machine's node; the client verbs
-//! (say · take · drop · done · ask) come next.
+//! One binary. `kapwa serve` runs this machine's node; every other command
+//! is a thin client over that node's HTTP surface (see `cli`).
 //!
 //! One process per machine. Agents on the machine talk to it over
 //! 127.0.0.1; it pulls every other node's log and folds them all into one
@@ -10,6 +10,7 @@
 
 mod auth;
 mod board;
+mod cli;
 mod config;
 mod log;
 mod oidc;
@@ -100,30 +101,24 @@ impl App {
     }
 }
 
-const HELP: &str = "kapwa — what participants owe each other
-
-  kapwa serve        run this machine's node (127.0.0.1:3410)
-  kapwa --version
-
-  the client verbs (say · take · drop · done · ask) are not built yet;
-  until then: curl, with a key from ~/.config/kapwa/agents. see PROTOCOL.md
-";
-
 fn main() -> anyhow::Result<()> {
-    match std::env::args().nth(1).as_deref() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
         Some("serve") => serve(),
         Some("--version" | "-V") => {
             println!("kapwa {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        None | Some("help" | "--help" | "-h") => {
-            print!("{HELP}");
+        Some("help" | "--help" | "-h") => {
+            print!("{}", cli::HELP);
             Ok(())
         }
-        Some(other) => {
-            eprintln!("kapwa: unknown command `{other}`\n");
-            eprint!("{HELP}");
-            std::process::exit(2);
+        // everything else is the client: a keyboard over the local node
+        _ => {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            std::process::exit(rt.block_on(cli::run(args)));
         }
     }
 }

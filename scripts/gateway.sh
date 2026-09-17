@@ -19,7 +19,7 @@ start() { # name port peers
     "$BIN" serve >"$TMP/out/$1.log" 2>&1 &
   echo $!
 }
-post() { curl -sS -X POST "$1/api/event" -H "Authorization: Bearer $2" -H 'content-type: application/json' -d "$3" >/dev/null; }
+k() { local url=$1 key=$2; shift 2; KAPWA_URL=$url KAPWA_KEY=$key "$BIN" "$@" >/dev/null; }   # the client, as an agent would use it
 board() { curl -s -H 'Authorization: Bearer view-key' "$1/api/board.txt"; }
 until_up() { for _ in $(seq 40); do curl -sf "$1/healthz" >/dev/null && return; sleep 0.25; done; echo "$1 never came up"; cat "$TMP"/out/*.log; exit 1; }
 tick() { sleep "${1:-6}"; }   # sync interval is 5s
@@ -34,8 +34,8 @@ until_up $H; until_up $A; until_up $B
 board $H | sed -n '1,3p'
 
 say "2. ana, on leaf-a, writes. the gateway never asked, yet it has it:"
-post $A ana-key '{"kind":"create","id":"fence-quote","title":"Get a second quote for the fence","priority":"P1"}'
-post $A ana-key '{"kind":"claim","id":"fence-quote","note":"mine"}'
+k $A ana-key say --as fence-quote "Get a second quote for the fence" --p P1 --t fence
+k $A ana-key take fence-quote
 tick
 board $H
 
@@ -44,24 +44,24 @@ tick
 board $B | sed -n '1,2p;4,$p'
 
 say "4. the other way: ben, on leaf-b, writes; leaf-a sees it through the gateway"
-post $B ben-key '{"kind":"create","id":"roof-leak","title":"Roof leaks over the back door","priority":"P0"}'
+k $B ben-key say --as roof-leak "Roof leaks over the back door" --p P0 --t roof
 tick 11
 board $A | sed -n '2p;4,$p'
 
 say "5. the gateway dies. both leaves keep working"
 kill $PH; wait $PH 2>/dev/null || true
-post $A ana-key '{"kind":"note","id":"roof-leak","note":"ana: I can look Thursday"}'
-post $B ben-key '{"kind":"claim","id":"roof-leak"}'
+k $A ana-key say roof-leak "I can look Thursday"
+k $B ben-key take roof-leak
 tick 7
 echo "   leaf-a: $(board $A | sed -n '3p' | cut -c1-90)"
-echo "   leaf-b still thinks roof-leak has $(curl -s -H 'Authorization: Bearer view-key' $B/api/item/roof-leak | grep -o '"history":\[[^]]*\]' | grep -o '"kind"' | wc -l | tr -d ' ') events"
+echo "   leaf-b still thinks roof-leak has $(curl -s -H 'Authorization: Bearer view-key' $B/api/item/roof-leak | grep -o '"history":\[[^]]*\]' | grep -o '"verb"' | wc -l | tr -d ' ') events"
 
 say "6. the gateway comes back (same disk). everyone converges, nothing was lost"
 PH=$(start gateway $HP "")
 until_up $H; tick 16
 for n in "$H gateway" "$A leaf-a" "$B leaf-b"; do set -- $n
   printf '   %-8s ' "$2"; curl -s -H 'Authorization: Bearer view-key' $1/api/item/roof-leak \
-    | python3 -c "import json,sys; i=json.load(sys.stdin); print('owner', i['owner'], '· history', [h['by']+':'+h['kind'] for h in i['history']])"
+    | python3 -c "import json,sys; i=json.load(sys.stdin); print('owner', i['owner'], '· history', [h['by']+':'+h['verb'] for h in i['history']])"
 done
 
 say "7. who reached out to whom"
