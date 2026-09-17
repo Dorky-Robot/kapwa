@@ -1,381 +1,178 @@
+//! kapwa — what participants owe each other.
+//!
+//! One binary. `kapwa serve` runs this machine's node; the client verbs
+//! (say · take · drop · done · ask) come next.
+//!
+//! One process per machine. Agents on the machine talk to it over
+//! 127.0.0.1; it pulls every other node's log and folds them all into one
+//! board; people read that board through the network's Pocket ID.
+//! Protocol in PROTOCOL.md.
+
+mod auth;
+mod board;
 mod config;
-mod discovery;
-mod identity;
-mod inbox;
-mod skills;
-mod ssh;
+mod log;
+mod oidc;
+mod puller;
+mod render;
+mod routes;
 
-use anyhow::Result;
+use std::sync::{Arc, Mutex, RwLock};
 
-fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    let cmd = args.get(1).map(|s| s.as_str());
+use axum_extra::extract::cookie::Key;
+use base64::Engine as _;
 
-    match cmd {
-        None | Some("identity") => cli_identity(&args[1..]),
-        Some("peers") => cli_peers(&args[2..]),
-        Some("ask") => cli_ask(&args[2..]),
-        Some("tell") => cli_tell(&args[2..]),
-        Some("run") => cli_run(&args[2..]),
-        Some("inbox") => cli_inbox(&args[2..]),
-        Some("skills") => cli_skills(&args[2..]),
-        Some("skill") => cli_skill(&args[2..]),
+use crate::config::Config;
+
+pub struct Inner {
+    pub cfg: Config,
+    pub logs: log::Logs,
+    pub board: RwLock<board::State>,
+    pub peers: puller::Peers,
+    pub oidc: RwLock<Option<Arc<openidconnect::core::CoreClient>>>,
+    pub http: reqwest::Client,
+    pub key: Key,
+}
+
+#[derive(Clone)]
+pub struct App(pub Arc<Inner>);
+
+impl std::ops::Deref for App {
+    type Target = Inner;
+    fn deref(&self) -> &Inner {
+        &self.0
+    }
+}
+
+impl axum::extract::FromRef<App> for Key {
+    fn from_ref(app: &App) -> Key {
+        app.key.clone()
+    }
+}
+
+impl App {
+    pub fn new(cfg: Config) -> App {
+        // the session cookie key: ≥64 bytes from the env, else per-boot
+        // (fine when there is no dashboard to keep a session for)
+        let key = cfg
+            .secret_key_base
+            .as_ref()
+            .and_then(|b| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(b)
+                    .ok()
+                    .or_else(|| Some(b.as_bytes().to_vec()))
+            })
+            .filter(|b| b.len() >= 64)
+            .map(|b| Key::from(&b))
+            .unwrap_or_else(Key::generate);
+        let logs = log::Logs::open(&cfg.dir, &cfg.writer);
+        let app = App(Arc::new(Inner {
+            logs,
+            board: RwLock::new(board::State::default()),
+            peers: Arc::new(Mutex::new(Default::default())),
+            oidc: RwLock::new(None),
+            http: reqwest::Client::builder()
+                .user_agent(concat!("kapwa/", env!("CARGO_PKG_VERSION")))
+                .build()
+                .expect("http client"),
+            key,
+            cfg,
+        }));
+        app.refresh_board();
+        app
+    }
+
+    pub fn refresh_board(&self) {
+        let events = self.logs.all();
+        let st = board::State {
+            items: board::fold(&events),
+            writers: self
+                .logs
+                .writers()
+                .into_iter()
+                .map(|w| (w.clone(), self.logs.last_seq(&w)))
+                .collect(),
+            events: events.len(),
+            built_at: log::now(),
+        };
+        *self.board.write().unwrap() = st;
+    }
+}
+
+const HELP: &str = "kapwa — what participants owe each other
+
+  kapwa serve        run this machine's node (127.0.0.1:3410)
+  kapwa --version
+
+  the client verbs (say · take · drop · done · ask) are not built yet;
+  until then: curl, with a key from ~/.config/kapwa/agents. see PROTOCOL.md
+";
+
+fn main() -> anyhow::Result<()> {
+    match std::env::args().nth(1).as_deref() {
+        Some("serve") => serve(),
         Some("--version" | "-V") => {
             println!("kapwa {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        Some("help" | "--help" | "-h") => {
-            print_help();
+        None | Some("help" | "--help" | "-h") => {
+            print!("{HELP}");
             Ok(())
         }
         Some(other) => {
-            eprintln!("Unknown command: {}", other);
-            eprintln!("Run `kapwa help` for usage.");
-            std::process::exit(1);
+            eprintln!("kapwa: unknown command `{other}`\n");
+            eprint!("{HELP}");
+            std::process::exit(2);
         }
     }
 }
 
-// ── identity ──────────────────────────────────────────────────────────
+#[tokio::main]
+async fn serve() -> anyhow::Result<()> {
+    // the node's env file, unless the environment already says otherwise
+    let env_file = std::env::var("KAPWA_ENV_FILE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| config::home().join(".config/kapwa/env"));
+    config::load_env_file(&env_file);
 
-fn cli_identity(args: &[String]) -> Result<()> {
-    let config = config::Config::load()?;
-    let name_only = args.iter().any(|a| a == "--name-only");
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,tower_http=warn".into()),
+        )
+        .init();
 
-    if name_only {
-        println!("{}", config.identity);
-        return Ok(());
-    }
-
-    let json = identity::gather_json(&config.identity)?;
-    println!("{}", json);
-    Ok(())
-}
-
-// ── peers ─────────────────────────────────────────────────────────────
-
-fn cli_peers(args: &[String]) -> Result<()> {
-    let config = config::Config::load()?;
-    let use_cache = args.iter().any(|a| a == "--cached");
-    let json_flag = args.iter().any(|a| a == "--json");
-
-    let peers = if use_cache {
-        discovery::cached()
-    } else {
-        eprintln!("Scanning SSH config for kapwa peers...");
-        discovery::scan(&config.identity, 5)
-    };
-
-    if json_flag {
-        println!("{}", serde_json::to_string_pretty(&peers)?);
-        return Ok(());
-    }
-
-    if peers.is_empty() {
-        println!("No kapwa peers found.");
-        println!("Install kapwa on other machines in your ~/.ssh/config to discover them.");
-        return Ok(());
-    }
-
-    println!(
-        "{:<20} {:<20} {:<24}",
-        "NAME", "SSH", "LAST SEEN"
+    let cfg = Config::from_env()?;
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], cfg.port));
+    let app = App::new(cfg);
+    tracing::info!(
+        "kapwa {} · writer {} · {} · peers {} · mesh token {} · agents {} · dashboard {}",
+        env!("CARGO_PKG_VERSION"),
+        app.cfg.writer,
+        addr,
+        app.cfg.peers.len(),
+        if app.cfg.mesh_token.is_some() {
+            "set"
+        } else {
+            "UNSET (no replication)"
+        },
+        app.cfg.agents_file.display(),
+        if app.cfg.oidc.is_some() {
+            "oidc"
+        } else {
+            "off"
+        },
     );
-    println!("{}", "\u{2500}".repeat(64));
 
-    for peer in &peers {
-        println!(
-            "{:<20} {:<20} {:<24}",
-            peer.name, peer.ssh, peer.last_seen,
-        );
-    }
+    oidc::discover_in_background(app.clone());
+    puller::supervise(app.clone());
+
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, routes::router(app))
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await?;
     Ok(())
-}
-
-// ── ask ───────────────────────────────────────────────────────────────
-
-fn cli_ask(args: &[String]) -> Result<()> {
-    if args.len() < 2 {
-        eprintln!("Usage: kapwa ask <peer> <query>");
-        eprintln!("Queries: identity, tunnels, routes [tunnel], updates");
-        std::process::exit(1);
-    }
-
-    let config = config::Config::load()?;
-    let peer_name = &args[0];
-    let query = &args[1];
-
-    let peer = resolve_peer(peer_name, &config.identity)?;
-    let timeout = 10;
-
-    match query.as_str() {
-        "identity" => {
-            let result = ssh::kapwa_cmd(&peer, "identity", timeout)?;
-            if result.success {
-                print!("{}", result.stdout);
-            } else {
-                eprintln!("Failed: {}", result.stderr.trim());
-                std::process::exit(1);
-            }
-        }
-        "tunnels" => {
-            let result = ssh::tunnels_cmd(&peer, "list --json", timeout)?;
-            if result.success {
-                print!("{}", result.stdout);
-            } else {
-                eprintln!("Failed: {}", result.stderr.trim());
-                std::process::exit(1);
-            }
-        }
-        "routes" => {
-            let tunnel = args.get(2).map(|s| s.as_str()).unwrap_or("");
-            let cmd = if tunnel.is_empty() {
-                "routes --json".to_string()
-            } else {
-                format!("routes {} --json", tunnel)
-            };
-            let result = ssh::tunnels_cmd(&peer, &cmd, timeout)?;
-            if result.success {
-                print!("{}", result.stdout);
-            } else {
-                eprintln!("Failed: {}", result.stderr.trim());
-                std::process::exit(1);
-            }
-        }
-        "updates" => {
-            let result = ssh::exec(&peer, "brew outdated 2>/dev/null", timeout)?;
-            if result.stdout.trim().is_empty() {
-                println!("No pending updates on {}.", peer_name);
-            } else {
-                println!("Pending updates on {}:", peer_name);
-                print!("{}", result.stdout);
-            }
-        }
-        other => {
-            eprintln!("Unknown query: {}", other);
-            eprintln!("Available: identity, tunnels, routes, updates");
-            std::process::exit(1);
-        }
-    }
-
-    Ok(())
-}
-
-// ── tell ──────────────────────────────────────────────────────────────
-
-fn cli_tell(args: &[String]) -> Result<()> {
-    if args.len() < 2 {
-        eprintln!("Usage: kapwa tell <peer> \"<message>\"");
-        std::process::exit(1);
-    }
-
-    let config = config::Config::load()?;
-    let peer_name = &args[0];
-    let message = args[1..].join(" ");
-
-    let peer = resolve_peer(peer_name, &config.identity)?;
-
-    let msg_json = serde_json::json!({
-        "from": config.identity,
-        "body": message,
-    });
-
-    let escaped = msg_json.to_string().replace('\'', "'\\''");
-    let cmd = format!(
-        "if command -v kapwa >/dev/null 2>&1; then kapwa inbox append '{}'; \
-         elif [ -x ~/.local/bin/kapwa ]; then ~/.local/bin/kapwa inbox append '{}'; \
-         else echo 'kapwa not found' >&2; exit 1; fi",
-        escaped, escaped
-    );
-    let result = ssh::exec(&peer, &cmd, 10)?;
-
-    if result.success {
-        println!("Message sent to {}.", peer_name);
-    } else {
-        eprintln!("Could not deliver to {}: {}", peer_name, result.stderr.trim());
-        std::process::exit(1);
-    }
-
-    Ok(())
-}
-
-// ── inbox ─────────────────────────────────────────────────────────────
-
-fn cli_inbox(args: &[String]) -> Result<()> {
-    match args.first().map(|s| s.as_str()) {
-        None => {
-            let messages = inbox::read()?;
-            print!("{}", inbox::format_messages(&messages));
-            Ok(())
-        }
-        Some("clear") => {
-            inbox::clear()?;
-            println!("Inbox cleared.");
-            Ok(())
-        }
-        Some("append") => {
-            // Internal: kapwa inbox append '{"from":"...", "body":"..."}'
-            let json = args.get(1)
-                .ok_or_else(|| anyhow::anyhow!("expected JSON argument"))?;
-            let msg: serde_json::Value = serde_json::from_str(json)?;
-            let from = msg["from"].as_str().unwrap_or("unknown");
-            let body = msg["body"].as_str().unwrap_or("");
-            inbox::append(from, body)?;
-            Ok(())
-        }
-        Some(other) => {
-            eprintln!("Unknown inbox command: {}", other);
-            std::process::exit(1);
-        }
-    }
-}
-
-// ── run ───────────────────────────────────────────────────────────────
-
-fn cli_run(args: &[String]) -> Result<()> {
-    if args.len() < 2 {
-        eprintln!("Usage: kapwa run <peer> \"<command>\"");
-        std::process::exit(1);
-    }
-
-    let config = config::Config::load()?;
-    let peer_name = &args[0];
-    let command = args[1..].join(" ");
-
-    let peer = resolve_peer(peer_name, &config.identity)?;
-    let result = ssh::exec(&peer, &command, 30)?;
-
-    if !result.stdout.is_empty() {
-        print!("{}", result.stdout);
-    }
-    if !result.stderr.is_empty() {
-        eprint!("{}", result.stderr);
-    }
-
-    if !result.success {
-        std::process::exit(1);
-    }
-
-    Ok(())
-}
-
-// ── skills ────────────────────────────────────────────────────────────
-
-fn cli_skills(args: &[String]) -> Result<()> {
-    let json_flag = args.iter().any(|a| a == "--json");
-    let names = skills::list();
-
-    if json_flag {
-        println!("{}", serde_json::to_string(&names)?);
-        return Ok(());
-    }
-
-    if names.is_empty() {
-        println!("No skills installed.");
-        println!("Skills are markdown files in ~/.config/kapwa/skills/");
-        return Ok(());
-    }
-
-    for name in &names {
-        println!("  {}", name);
-    }
-
-    Ok(())
-}
-
-fn cli_skill(args: &[String]) -> Result<()> {
-    if args.is_empty() {
-        eprintln!("Usage: kapwa skill <show|sync> ...");
-        std::process::exit(1);
-    }
-    match args[0].as_str() {
-        "show" => {
-            let name = args.get(1)
-                .ok_or_else(|| anyhow::anyhow!("Usage: kapwa skill show <name>"))?;
-            let content = skills::show(name)?;
-            print!("{}", content);
-            Ok(())
-        }
-        "sync" => {
-            let config = config::Config::load()?;
-            let peers = discovery::cached();
-            if peers.is_empty() {
-                println!("No known peers. Run `kapwa peers` first to discover them.");
-                return Ok(());
-            }
-            for peer in &peers {
-                print!("Syncing skills from {}... ", peer.name);
-                match skills::sync_from_peer(peer, 10) {
-                    Ok(report) => {
-                        if report.pulled.is_empty() {
-                            println!("up to date.");
-                        } else {
-                            println!("pulled: {}", report.pulled.join(", "));
-                        }
-                    }
-                    Err(e) => println!("failed: {}", e),
-                }
-            }
-            Ok(())
-        }
-        other => {
-            eprintln!("Unknown skill command: {}", other);
-            std::process::exit(1);
-        }
-    }
-}
-
-// ── help ──────────────────────────────────────────────────────────────
-
-fn print_help() {
-    println!("kapwa — machines as mutual selves");
-    println!();
-    println!("Coordination infrastructure for an agentic mesh. Peers are");
-    println!("discovered automatically from your ~/.ssh/config — any machine");
-    println!("with kapwa installed is a peer. No manual registration needed.");
-    println!();
-    println!("USAGE:");
-    println!("  kapwa                              Show this machine's identity");
-    println!("  kapwa identity [--name-only]        Identity (or just the name)");
-    println!();
-    println!("DISCOVERY:");
-    println!("  kapwa peers                         Scan and list kapwa peers");
-    println!("  kapwa peers --cached                Show last scan results (fast)");
-    println!();
-    println!("COMMUNICATION:");
-    println!("  kapwa ask <peer> <query>             Query a peer's state");
-    println!("    Queries: identity, tunnels, routes [tunnel], updates");
-    println!("  kapwa tell <peer> \"<message>\"        Send message to peer");
-    println!("  kapwa inbox                          Read incoming messages");
-    println!("  kapwa inbox clear                    Clear inbox");
-    println!();
-    println!("EXECUTION:");
-    println!("  kapwa run <peer> \"<command>\"         Execute command on peer");
-    println!();
-    println!("SKILLS:");
-    println!("  kapwa skills                         List installed skills");
-    println!("  kapwa skill show <name>              Print a skill");
-    println!("  kapwa skill sync                     Pull skills from peers");
-    println!();
-    println!("HOW DISCOVERY WORKS:");
-    println!("  kapwa reads your ~/.ssh/config, probes each Host entry with");
-    println!("  `kapwa identity --name-only`, and any machine that responds");
-    println!("  is a peer. Results are cached in ~/.config/kapwa/peers.json.");
-    println!();
-    println!("EXAMPLES:");
-    println!("  kapwa peers                          Discover who's out there");
-    println!("  kapwa ask mini identity              Full state of mini");
-    println!("  kapwa run mac2019 \"tunnels restart og\"");
-    println!("  kapwa tell mini \"I need to reboot for updates\"");
-    println!("  kapwa skill show drain-and-reboot");
-}
-
-// ── helpers ───────────────────────────────────────────────────────────
-
-/// Resolve a peer name to a Peer struct. Checks cache first, scans if needed.
-fn resolve_peer(name: &str, my_identity: &str) -> Result<discovery::Peer> {
-    discovery::find_peer(name, my_identity)
-        .ok_or_else(|| anyhow::anyhow!(
-            "peer '{}' not found. Run `kapwa peers` to discover peers.", name
-        ))
 }
