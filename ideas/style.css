@@ -1,0 +1,54 @@
+:root{--ink:#1d1f21;--dim:#6b7075;--line:#e6e6e6;--bg:#fbfbfa;--card:#fff;--ok:#2a7;--warn:#c90;--bad:#c33;--blue:#27c;--accent:#7a4bd6}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.55 -apple-system,BlinkMacSystemFont,"Inter",Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg)}
+code,pre,kbd,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em}
+a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
+header{border-bottom:1px solid var(--line);background:#fff}
+header .wrap{display:flex;gap:1.5rem;align-items:baseline;padding:.9rem 1.25rem;max-width:74rem;margin:0 auto}
+header .brand{font-weight:600}header .brand small{color:var(--dim);font-weight:400;margin-left:.5rem}
+header nav a{margin-right:1rem;color:var(--dim)}header nav a.on{color:var(--ink);font-weight:600}
+main{max-width:74rem;margin:0 auto;padding:1.5rem 1.25rem 4rem}
+h1{font-size:1.6rem;margin:.5rem 0 .25rem}h2{font-size:1.15rem;margin:2.5rem 0 .6rem;padding-top:.5rem;border-top:1px solid var(--line)}
+h3{font-size:1rem;margin:1.25rem 0 .4rem}
+p.lede{font-size:1.05rem;color:#333;max-width:52rem}
+.dim{color:var(--dim)}
+.grid{display:grid;gap:1rem}.g2{grid-template-columns:repeat(auto-fit,minmax(20rem,1fr))}.g3{grid-template-columns:repeat(auto-fit,minmax(16rem,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:1rem 1.1rem}
+.card h3{margin-top:0}
+.card.lean{border-color:var(--accent);box-shadow:0 0 0 2px #7a4bd622}
+.tag{display:inline-block;font-size:.72rem;padding:.1rem .45rem;border-radius:999px;border:1px solid var(--line);color:var(--dim);margin-left:.4rem;vertical-align:middle}
+.tag.steal{border-color:var(--ok);color:var(--ok)}.tag.skip{border-color:var(--bad);color:var(--bad)}.tag.lean{border-color:var(--accent);color:var(--accent)}
+.tag.done{border-color:var(--ok);color:var(--ok)}.tag.next{border-color:var(--blue);color:var(--blue)}.tag.open{border-color:var(--warn);color:var(--warn)}
+pre{background:#161819;color:#e8e8e8;padding:.9rem 1rem;border-radius:8px;overflow:auto;line-height:1.5;font-size:.82rem;white-space:pre-wrap;overflow-wrap:anywhere;tab-size:2}
+pre .c{color:#8a8f94}pre .g{color:#7ec699}pre .y{color:#e5c07b}pre .r{color:#e06c75}pre .b{color:#61afef}pre .p{color:#c678dd}
+table{border-collapse:collapse;width:100%;font-size:.92rem}th,td{text-align:left;padding:.45rem .6rem;border-top:1px solid var(--line);vertical-align:top}th{color:var(--dim);font-weight:600;border-top:0}
+.pros,.cons{margin:.4rem 0 0;padding-left:1.1rem;font-size:.9rem}.pros li::marker{color:var(--ok)}.cons li::marker{color:var(--bad)}
+.q{background:#fff8e6;border:1px solid #f1dfa5;border-radius:8px;padding:.8rem 1rem;margin:1rem 0}
+.q b{color:#8a6100}
+figure{margin:1rem 0;background:#fff;border:1px solid var(--line);border-radius:8px;padding:1rem}
+figcaption{color:var(--dim);font-size:.85rem;margin-top:.5rem}
+svg{max-width:100%;height:auto;display:block}
+.svgt{font:12px ui-monospace,Menlo,monospace;fill:#1d1f21}.svgd{font:11px -apple-system,Helvetica,sans-serif;fill:#6b7075}
+.node{fill:#fff;stroke:#1d1f21;stroke-width:1.2}.node.laptop{stroke-dasharray:4 3}
+.arrow{stroke:#27c;stroke-width:1.4;fill:none;marker-end:url(#ah)}.arrow.dim{stroke:#bbb}
+.pill{fill:#f3f0fb;stroke:#7a4bd6}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem;font-size:.92rem}.kv dt{color:var(--dim)}.kv dd{margin:0}
+.status{display:flex;gap:1.25rem;flex-wrap:wrap;margin:1rem 0}
+.status .card{flex:1;min-width:12rem}
+.big{font-size:1.5rem;font-weight:600}
+footer{max-width:74rem;margin:0 auto;padding:1rem 1.25rem;color:var(--dim);font-size:.85rem;border-top:1px solid var(--line)}
+.side{display:grid;grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));gap:1rem;align-items:start}
+.pick{font-size:.85rem;color:var(--accent);margin-top:.5rem}
+details{margin:.5rem 0}summary{cursor:pointer;color:var(--blue)}
+
+/* phones: nothing scrolls sideways except wide tables */
+@media (max-width:640px){
+  body{font-size:15px}main{padding:1rem .9rem 3rem}
+  header .wrap{flex-direction:column;gap:.35rem;padding:.7rem .9rem}
+  header nav{display:flex;flex-wrap:wrap;gap:.15rem .9rem}header nav a{margin-right:0}
+  h1{font-size:1.35rem}pre{font-size:.76rem;padding:.75rem .8rem}
+  table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .kv{grid-template-columns:1fr}.kv dt{margin-top:.4rem}
+  .status .card{min-width:45%}
+  .grid.g2,.grid.g3,.side{grid-template-columns:1fr}
+}

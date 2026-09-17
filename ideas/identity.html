@@ -1,0 +1,122 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>kapwa · identity</title><link rel="stylesheet" href="style.css"><style>.ch text{font:12px ui-monospace,Menlo,monospace}.k{fill:#fff;stroke:#1d1f21;stroke-width:1.2}.kr{fill:#f3f0fb;stroke:#7a4bd6}.kh{fill:#e8f6ee;stroke:#2a7}.ka{fill:#eef6ff;stroke:#27c}</style></head><body>
+<header><div class="wrap"><span class="brand">kapwa <small>ideas &amp; options</small></span>
+<nav><a href="index.html">overview</a><a href="protocol.html">protocol</a><a href="collectives.html">collectives &amp; kita</a><a class="on" href="identity.html">identity</a><a href="bytes.html">moving bytes</a><a href="using.html">using it</a><a href="decisions.html">decisions</a><a href="background.html">background</a></nav></div></header>
+<main>
+<h1>Identity: who is who</h1>
+<p class="lede">Once the mesh is open to other collectives, a bearer token and a shared secret aren't enough: anyone relaying a log could rewrite it. Every event needs a signature any node can check offline, and every key needs a reason to be believed. Almost all of that is a problem nostr has already solved, so kapwa's identity layer <i>is</i> nostr's.</p>
+
+<h2 id="nostr">What we take from nostr</h2>
+<table>
+<tr><th>need</th><th>nostr already has</th><th></th></tr>
+<tr><td>a signed event</td><td><b>NIP-01</b>: <code>id · pubkey · created_at · kind · tags · content · sig</code>. The id is a sha256 over a tiny fixed array; the sig is Schnorr over the id</td><td>It canonicalizes, but the form is so narrow (strings, ints, arrays of strings) that dozens of stacks agree on it daily. The interop risk is already retired, and the test vectors already exist.</td></tr>
+<tr><td>a collective's key, anchored to its domain</td><td><b>NIP-05</b>: <code>/.well-known/nostr.json</code> maps <code>name@domain</code> → pubkey</td><td><code>everyday-vet@everyday.vet</code>, <code>sara@everyday.vet</code>. TLS + DNS vouch the first time; nodes pin after. A changed key is loud.</td></tr>
+<tr><td>who belongs to a collective</td><td><b>lists</b> (NIP-51): a replaceable event signed by the collective's key, naming member pubkeys</td><td>Membership is one event. Revoking is publishing it again without them. A person is a <i>set</i> of listed keys, so a lost passkey is a removal, not an identity death.</td></tr>
+<tr><td>nodes proving who they are</td><td><b>NIP-42</b>: sign a challenge</td><td>No shared mesh secret.</td></tr>
+<tr><td>a person's key from a passkey</td><td><b>Nosskey</b>: derives a nostr key from WebAuthn PRF</td><td>Exists, in the ecosystem we'd be joining. The RP-ID rule below still applies.</td></tr>
+<tr><td>agents that shouldn't hold a person's key</td><td><b>NIP-46</b> remote signing</td><td>A phone can be the signer for something that needs a human.</td></tr>
+<tr><td>marks that evaporate</td><td><b>NIP-40</b> <code>expiration</code> tag</td><td>A claim that lapses on its own.</td></tr>
+<tr><td>item ids</td><td>an item <i>is</i> the event that created it; the rest point back with an <code>e</code> tag</td><td>Collision-free ids from any writer, offline, for free.</td></tr>
+</table>
+<div class="side">
+<div class="card lean"><h3>A kapwa event as a nostr event</h3>
+<pre>{
+  "id": "4c1f…",
+  "pubkey": "9f2c…",            <span class="c">← sara's key, or her node's</span>
+  "created_at": 1789600346,
+  "kind": 7410,                 <span class="c">← a kapwa kind; ours to define</span>
+  "tags": [
+    ["e", "a81b…"],             <span class="c">← the item (its creating event)</span>
+    ["v", "take"],              <span class="c">← the verb</span>
+    ["p", "5d30…", "to"],       <span class="c">← dorkyrobot</span>
+    ["w", "everyday-vet/mini"], <span class="c">← writer</span>
+    ["seq", "88"],              <span class="c">← our completeness cursor</span>
+    ["ref", "kita:ev:d2877", "about"] <span class="c">← a reference home</span>
+  ],
+  "content": "taking it",
+  "sig": "b7e0…"
+}</pre>
+<p class="dim">Any nostr library can build, sign and verify this today. <code>nak</code>, the nostr CLI, can already debug our mesh.</p></div>
+<div class="card"><h3>What nostr doesn't have, and we keep</h3>
+<ul><li><b>Completeness.</b> nostr can't tell you "I have all of mini's events." Our per-writer <code>seq</code> rides along as a tag, and <code>GET /api/log/&lt;writer&gt;?since=</code> stays the sync. (NIP-77 negentropy exists if we outgrow it.)</li>
+<li><b>Plain HTTP.</b> nostr's wire is a websocket. We carry nostr <i>events</i> over our two GETs and a POST.</li>
+<li><b>The fold, the board, collectives.</b> nostr is the envelope, not the letter.</li></ul>
+<h3>What it costs</h3>
+<ul><li><b>secp256k1 Schnorr, not ed25519.</b> PRF bytes work as either; microcontroller libraries exist for both.</li>
+<li><b>Every event needs a signature</b>, so raw <code>curl</code> can't author one. Hello-world survives because on localhost the node signs for its agents, the same stance as <code>kitad</code> stamping <code>who</code>.</li>
+<li><b><code>created_at</code> is whole seconds.</b> Fold ties break on event id.</li>
+<li><b>We don't join the public network.</b> Our nodes are private relays.</li></ul></div>
+</div>
+<div class="q"><b>One rule this brings:</b> nodes never alter an event. Today <code>kapwa</code> parses lines and re-serializes them when relaying (key order already differs between the Elixir-written and Rust-written lines in your logs); that has to become store-and-serve verbatim. The same trap exists in kita: <code>Act::id()</code> is <code>sha256(serde_json::to_string(self))</code>, an id defined by one Rust serializer. Fine with one implementation; the first thing a second one trips on. Scuttlebutt signed <code>JSON.stringify</code> output, and it's a large part of why only one real implementation ever existed.</div>
+
+<h2 id="chain">Who vouches for whom</h2>
+<figure>
+<svg class="ch" viewBox="0 0 760 230" role="img" aria-label="certificate chain">
+  <defs><marker id="ai" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7a4bd6"/></marker></defs>
+  <rect class="kr" x="290" y="15" width="180" height="46" rx="8"/><text x="380" y="35" text-anchor="middle" font-weight="600">everyday-vet</text><text class="svgd" x="380" y="52" text-anchor="middle">everyday-vet@everyday.vet · NIP-05</text>
+  <rect class="k" x="60" y="105" width="170" height="46" rx="8"/><text x="145" y="125" text-anchor="middle">everyday-vet/mini</text><text class="svgd" x="145" y="142" text-anchor="middle">machine key · signs its events</text>
+  <rect class="kh" x="295" y="105" width="170" height="46" rx="8"/><text x="380" y="125" text-anchor="middle">sara</text><text class="svgd" x="380" y="142" text-anchor="middle">person · key from a passkey</text>
+  <rect class="kh" x="530" y="105" width="170" height="46" rx="8"/><text x="615" y="125" text-anchor="middle">front-desk</text><text class="svgd" x="615" y="142" text-anchor="middle">person</text>
+  <rect class="ka" x="295" y="180" width="170" height="40" rx="8"/><text x="380" y="198" text-anchor="middle">sara's agent</text><text class="svgd" x="380" y="213" text-anchor="middle">key in a file · delegated, scoped, expires</text>
+  <path d="M340,61 L170,105" stroke="#7a4bd6" stroke-width="1.4" marker-end="url(#ai)"/><path d="M380,61 L380,105" stroke="#7a4bd6" stroke-width="1.4" marker-end="url(#ai)"/><path d="M420,61 L600,105" stroke="#7a4bd6" stroke-width="1.4" marker-end="url(#ai)"/><path d="M380,151 L380,180" stroke="#7a4bd6" stroke-width="1.4" marker-end="url(#ai)"/>
+  <text class="svgd" x="232" y="82">listed</text><text class="svgd" x="388" y="88">listed</text><text class="svgd" x="520" y="82">listed</text><text class="svgd" x="388" y="172">delegation</text>
+</svg>
+<figcaption>To believe an event from another collective you need one thing: its collective key, found at its domain. Membership is a list that key signed, which you already replicated. A person is a <i>set</i> of certified keys, never one key — so losing a passkey is a revocation, not an identity death.</figcaption>
+</figure>
+<h2 id="layers">What gets signed: three layers</h2>
+<table>
+<tr><th>layer</th><th>who signs</th><th>answers</th><th>cost</th></tr>
+<tr><td><b>0</b> · inside a machine</td><td>nobody</td><td>—</td><td>Agents talk to their own node on 127.0.0.1 with a bearer key, as today. Same stance as <code>kitad</code>: authentication belongs in front of it.</td></tr>
+<tr><td><b>1</b> · every event</td><td>the writer (machine key, certified by its collective)</td><td><i>"did everyday-vet really say this, and is this the line they wrote?"</i></td><td>One signature per event, one verify on ingest. A relay can withhold; it can no longer forge or edit. The shared mesh token goes away; nodes identify with NIP-42.</td></tr>
+<tr><td><b>2</b> · optional, the member signs instead</td><td>the member (person or agent key)</td><td><i>"did Sara herself decide this?"</i></td><td>Only for acts that want personal non-repudiation — a <code>decide</code>, an approval. This is where a passkey-derived key earns its keep: Face ID to sign an order.</td></tr>
+</table>
+
+
+<h2 id="keys">How does a person get a key? Three ways, side by side</h2>
+<div class="side">
+<div class="card"><h3>A · Derived from a passkey (WebAuthn PRF)</h3>
+<pre>navigator.credentials.get({ publicKey: { …,
+  extensions: { prf: { eval: { first: <span class="g">"kapwa signing v1"</span> } } } } })
+→ 32 bytes → a nostr key   (Nosskey does exactly this)</pre>
+<ul class="pros"><li>The private key is stored <b>nowhere</b>; it's recomputed with Face ID / Touch ID</li><li>Synced passkeys give the same key on every device — Scuttlebutt's multi-device problem, gone</li><li>Same passkey + same salt → same key, forever</li></ul>
+<ul class="cons"><li><b>RP-ID scoping.</b> Pocket ID's passkeys belong to <code>id.felixflor.es</code>. A page on <code>kapwa-mini.felixflor.es</code> cannot evaluate PRF on them, and Pocket ID doesn't hand PRF output to clients (nor should it)</li><li>So it needs a <b>second passkey</b>, registered by kapwa with RP ID <code>felixflor.es</code> (valid for every <code>kapwa-*</code> host). One extra enrollment per person per collective</li><li>The derived key is in page memory while signing — not hardware-bound. Use it to sign a short delegation, then drop it</li><li>Support: Safari 18+/iCloud Keychain ✓ · Chrome + Google Password Manager ✓ · security keys in Chrome ✓ · Firefox 139+ platform only · browser-only, so no CLI</li></ul></div>
+<div class="card lean"><h3>B · Bound through Pocket ID, unchanged (OpenPubkey) <span class="tag lean">lean, first</span></h3>
+<pre>key   = new nostr keypair          <span class="c"># browser or CLI</span>
+nonce = sha256(pubkey ‖ random)
+→ ordinary Pocket ID sign-in with that nonce
+→ id_token, signed by id.felixflor.es, now says:
+  <span class="g">"this key is felixflores@gmail.com"</span></pre>
+<ul class="pros"><li>Works today: our OIDC code already chooses the nonce. Pocket ID needs no change and sees a random-looking nonce</li><li>Uses the passkey people already enrolled</li><li>The collective's node verifies it once against Pocket ID's JWKS and adds the key to the collective's <b>member list</b> — so later verifiers never need the JWKS (rotation-proof)</li><li>Works from a CLI (device-code or loopback login)</li></ul>
+<ul class="cons"><li>The key itself lives somewhere: browser storage or a file</li><li>Trust roots in the IdP: whoever controls Pocket ID can mint members. True of every OIDC system, and it's your box</li></ul></div>
+<div class="card"><h3>C · A key in a file</h3>
+<pre>$ kapwa key new
+pub npub1q9f…
+<span class="c"># private half: ~/.config/kapwa/key, mode 0600</span>
+
+$ kapwa member add npub1q9f… \
+    --name grok-cto --until 2027-01-01
+<span class="c"># republishes the collective's member list</span></pre>
+<ul class="pros"><li>The only option for agents, machines, CI, an ESP32</li><li>Exactly the model you already run for SSH: generate, hand over the public half, get added</li></ul>
+<ul class="cons"><li>Someone has to vouch: a person with authority adds it to the list</li></ul></div>
+</div>
+<div class="q"><b>My read.</b> They aren't rivals. The <i>protocol</i> only says "nostr keys, and a member list." <b>C</b> for everything that isn't a person. <b>B</b> for people now, because it reuses Pocket ID untouched. <b>A</b> is an upgrade to <i>where a person's key lives</i> (nowhere), worth adding for layer-2 signatures once a second passkey enrollment is acceptable; A and B compose — a PRF-derived key can be the one bound through the nonce.</div>
+
+
+<h2>One thing I'd rule out</h2>
+<div class="card" style="border-color:#c33"><h3>Serving a kapwa page under <code>id.felixflor.es</code> to reach the existing passkey</h3><p>A cloudflared path rule could route <code>id.felixflor.es/kapwa/*</code> to kapwa, which would make PRF on the Pocket ID passkey work. It also means kapwa's JavaScript runs with the identity provider's origin — its cookies, its session. A bug in a dashboard becomes a compromise of sign-in for everything. Not worth it.</p></div>
+
+
+<h2>What this does for the earlier worries</h2>
+<table>
+<tr><th>worry</th><th>with signatures</th></tr>
+<tr><td>"Managing API keys" for external users</td><td>They generate a key; you add it to the list. <code>authorized_keys</code>, but replicated and revocable.</td></tr>
+<tr><td>The injection channel between agents</td><td><code>by</code> becomes provable, so a reader can weigh a note by <i>who provably wrote it</i> and which collective vouches for them — rather than by what the note claims.</td></tr>
+<tr><td>A relay rewriting history</td><td>Can't: every event verifies against its author. It can still withhold; peers comparing <code>seq</code> notice. (A <code>prev</code> hash per line would make truncation and equivocation provable too — later, if needed.)</td></tr>
+<tr><td>The shared mesh token</td><td>Gone. Nodes prove who they are by signing a challenge (NIP-42); there is no shared secret to leak.</td></tr>
+</table>
+
+
+<p class="dim">Sources: <a href="https://github.com/nostr-protocol/nips/blob/master/01.md">NIP-01</a> · <a href="https://github.com/nostr-protocol/nips">NIPs</a> · <a href="https://github.com/ocknamo/nosskey-sdk">Nosskey SDK</a> · <a href="https://nips.nostr.com/77">NIP-77</a> · <a href="https://www.corbado.com/blog/passkeys-prf-webauthn">Passkeys &amp; WebAuthn PRF (Corbado)</a> · <a href="https://developers.yubico.com/WebAuthn/Concepts/PRF_Extension/Developers_Guide_to_PRF.html">Developer's guide to PRF (Yubico)</a> · <a href="https://bitwarden.com/blog/prf-webauthn-and-its-role-in-passkeys/">PRF and passkeys (Bitwarden)</a> · <a href="https://github.com/openpubkey/openpubkey">OpenPubkey</a> · <a href="https://eprint.iacr.org/2023/296.pdf">OpenPubkey paper</a> · <a href="https://github.com/pocket-id/pocket-id">Pocket ID</a></p>
+</main>
+<footer>served from mac2024 · source in <code>Dorky-Robot/kapwa/ideas/</code></footer>
+</body></html>

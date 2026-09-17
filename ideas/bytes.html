@@ -1,0 +1,141 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>kapwa · moving bytes</title><link rel="stylesheet" href="style.css"></head><body>
+<header><div class="wrap"><span class="brand">kapwa <small>ideas &amp; options</small></span>
+<nav><a href="index.html">overview</a><a href="protocol.html">protocol</a><a href="collectives.html">collectives &amp; kita</a><a href="identity.html">identity</a><a class="on" href="bytes.html">moving bytes</a><a href="using.html">using it</a><a href="decisions.html">decisions</a><a href="background.html">background</a></nav></div></header>
+<main>
+<h1>Moving bytes</h1>
+<p class="lede">Files and live streams, directly between the people and machines in the mesh: you and Doug today, a practice and its clients tomorrow. This is a third concern, so it is a <b>third tool</b>, not a feature of kapwa. <b>kita knows. kapwa owes. A mover moves.</b> Each does one thing well, and each is useful without the others.</p>
+
+<h2 id="third">The third thing</h2>
+<div class="grid g3">
+<div class="card"><h3>kita — what we know</h3><p>Holds the record: the scan, the recording, the contract, as content with an identity. Never sends it anywhere.</p></div>
+<div class="card"><h3>kapwa — what we owe</h3><p>Carries the <i>reference</i> and the commitment: "I'm sending you this", "got it", "delivered on the 14th". Never carries the bytes. That was already the rule: <a href="collectives.html#context">bytes don't travel</a>.</p></div>
+<div class="card lean"><h3>the mover — how bytes and streams travel <span class="tag lean">its own tool</span></h3><p>Built on iroh: dial a key, not an address. Direct, encrypted QUIC between two devices, hole-punched through NAT, relayed only when it must be. Rust-native, 1.0 since June 2026. Working name below: <code>hatid</code> ("to deliver to its destination"). Yours to name.</p></div>
+</div>
+<p class="dim">The mover doesn't need kapwa at all: a ticket can be pasted into any chat. It uses kapwa only when it wants what kapwa is good at — a durable, signed, addressed record that something was offered and received.</p>
+
+<h2 id="separate">Why a separate tool</h2>
+<div class="side">
+<div class="card lean"><h3>What separation buys</h3><ul>
+<li><b>Focus.</b> kapwa is a ledger of commitments. Long-lived connections, NAT traversal, relays and throughput are a different job with different failure modes.</li>
+<li><b>Weight.</b> kapwa stays small enough for a shell script or a microcontroller to implement. iroh's dependencies live elsewhere.</li>
+<li><b>Pace.</b> Real-time networking moves fast; a ledger format should barely move at all. Separate tools version separately.</li>
+<li><b>Surface.</b> A process that listens for inbound QUIC and serves files from disk has a very different security profile from one that appends signed lines.</li>
+<li><b>Choice.</b> Because kapwa only <i>points at</i> bytes, other movers stay possible: a plain HTTPS link, a USB stick, whatever comes next.</li></ul></div>
+<div class="card"><h3>The seam: three things, again</h3>
+<table><tr><td><b>Identity</b></td><td>The same nostr key says who you are in both. The collective's member list binds a key to "dial me at <code>iroh:…</code>".</td></tr>
+<tr><td><b>A payload</b></td><td><code>["payload","hatid/offer","…"]</code>: a type kapwa has never heard of, and a string it never opens. Nothing about the mover appears in kapwa's spec.</td></tr>
+<tr><td><b>Receipts</b></td><td>The mover reports offers and deliveries by <i>saying</i> them on kapwa, with <code>source:"hatid"</code>, through the same CLI or HTTP any agent uses. No private hooks.</td></tr></table>
+<h3>What it costs</h3><ul>
+<li>One more thing to install and run where bytes move (not everywhere).</li>
+<li>Version skew across a seam; kept small by keeping the seam to a tag.</li>
+<li>Both tools need the key. A shared convention (one key file, or a NIP-46 signer), not a fourth daemon.</li></ul></div>
+</div>
+<p class="dim">The same test sorts features into the three: is it about what we <i>know</i>, what we <i>owe</i>, or what we <i>move</i>? Calls, screen sharing and presence are "move".</p>
+
+<h2 id="cases">Three cases, three different answers</h2>
+<table>
+<tr><th>who</th><th>what they run</th><th>what happens</th><th>verdict</th></tr>
+<tr><td><b>You ↔ Doug</b></td><td>the mover on both Macs</td><td>Direct QUIC, hole-punched; relay only as fallback. Any size, resumable, every chunk verified against a BLAKE3 hash. No cloudflared in the path, so the laptop's flapping tunnel stops mattering.</td><td><span class="tag steal">works today with off-the-shelf parts</span></td></tr>
+<tr><td><b>Streaming between nodes</b><br><span class="dim">screen, audio, a camera</span></td><td>native</td><td><code>iroh-live</code> (Media over QUIC) and <code>iroh-roq</code> (RTP over QUIC) exist: native capture, encode, low latency, no server in the middle.</td><td><span class="tag next">real, younger; a spike before a promise</span></td></tr>
+<tr><td><b>Everyday Vet ↔ a client</b><br><span class="dim">a pet owner with a phone</span></td><td>a browser, nothing installed</td><td>Browsers can't send raw UDP, so iroh in a browser is <b>relay-only</b> — but still <b>end-to-end encrypted</b> (the relay can't read it) and over port 443, so it works on any network.</td><td><span class="tag steal">the game changer, with caveats below</span></td></tr>
+</table>
+
+<h2 id="send">What it looks like</h2>
+<div class="side">
+<div class="card lean"><h3>Between two nodes</h3>
+<pre>$ hatid send site-plan.pdf --to doug \
+    "the revised plan"
+serving 14.2 MB · said 9c41e on kapwa
+
+<span class="c"># on Doug's machine, in prime or on the board:</span>
+asked of you (1)
+  9c41e  from felix · site-plan.pdf 14.2 MB
+         "the revised plan"
+
+$ hatid take 9c41e
+fetching · <span class="g">direct</span> · 38 MB/s · verified ✓
+saved ~/Downloads/site-plan.pdf
+<span class="c"># …and says so on kapwa: done 9c41e "received, verified"</span></pre>
+<p class="dim">The mover is just another agent using kapwa's public interface: it <i>says</i> the offer and <i>says</i> the receipt. kapwa gains no verbs, no code and no dependency. The ledger still ends up with what a practice needs: who was offered what, who fetched it, when, and that it arrived intact.</p></div>
+<div class="card"><h3>The event underneath</h3>
+<pre>{
+  "kind": 7410,
+  "tags": [
+    ["v", "say"],
+    ["p", "…doug…", "to"],
+    ["payload", "hatid/offer", "{…}"],
+    ["expiration", "1790200000"]
+  ],
+  "content": "site-plan.pdf, 14.2 MB: the revised plan"
+}</pre>
+<pre><span class="c"># hatid/offer — the mover's business, opaque to kapwa</span>
+{ "name": "site-plan.pdf", "size": 14200000,
+  "blake3": "bafk…", "ticket": "…" }</pre>
+<p class="dim">kapwa neither reads nor stores the file, and doesn't know what an offer is. It sees a sentence, an addressee, and a payload of a type it has never heard of. An expired ticket is a dead link, by design.</p></div>
+</div>
+
+<h2 id="clients">A practice and its clients</h2>
+<figure>
+<svg viewBox="0 0 760 210" role="img" aria-label="client fetch flow">
+  <defs><marker id="ab" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#27c"/></marker></defs>
+  <rect class="node" x="20" y="70" width="190" height="60" rx="8"/><text class="svgt" x="35" y="94">practice's node</text><text class="svgd" x="35" y="112">always on · holds the x-ray (kita)</text>
+  <rect class="pill" x="300" y="20" width="160" height="40" rx="8"/><text class="svgt" x="380" y="44" text-anchor="middle">a text message</text>
+  <rect class="node" x="300" y="150" width="160" height="40" rx="8" style="stroke:#bbb"/><text class="svgt" x="380" y="174" text-anchor="middle">relay (can't read it)</text>
+  <rect class="node" x="560" y="70" width="180" height="60" rx="8"/><text class="svgt" x="575" y="94">client's phone browser</text><text class="svgd" x="575" y="112">nothing installed</text>
+  <path d="M210,85 L300,45" stroke="#27c" stroke-width="1.4" marker-end="url(#ab)"/><path d="M460,45 L560,85" stroke="#27c" stroke-width="1.4" marker-end="url(#ab)"/>
+  <text class="svgd" x="470" y="40">link: everyday.vet/get#ticket</text>
+  <path d="M560,118 L460,165" stroke="#7a4bd6" stroke-width="1.6" marker-end="url(#ab)"/><path d="M300,165 L210,118" stroke="#7a4bd6" stroke-width="1.6" marker-end="url(#ab)"/>
+  <text class="svgd" x="380" y="205" text-anchor="middle">purple: the file itself, end-to-end encrypted between phone and practice</text>
+</svg>
+<figcaption>The ticket rides in the URL fragment (after <code>#</code>), which browsers never send to any server. The page is static; the bytes come from the practice's own machine.</figcaption>
+</figure>
+<div class="side">
+<div class="card"><h3>Why it's a game changer</h3><ul>
+<li><b>The record never sits on anyone else's server.</b> Not a portal, not an inbox, not a file-sharing site.</li>
+<li><b>Nothing to install, no account</b> for the client. A link in a text.</li>
+<li><b>Proof of delivery</b> lands in the practice's ledger, and from there in its kita: "sent Bella's x-rays to her owner; fetched the 14th, verified."</li>
+<li><b>It expires.</b> A ticket is a capability, not a permanent URL.</li>
+<li>With a client app later, the same link becomes fully direct and fast. Nothing else changes.</li></ul></div>
+<div class="card"><h3>Caveats, honestly</h3><ul>
+<li><b>The practice's node is the server.</b> It must be on. (The mini is; a laptop isn't.)</li>
+<li><b>Relayed means relay-speed.</b> n0's public relays are free, rate-limited, and meant for development. Real use wants our own.</li>
+<li><b>A relay needs a publicly reachable port</b>, including UDP for address discovery. That is the one piece that doesn't fit "everything behind a cloudflared tunnel": a small VPS, or a forwarded port.</li>
+<li><b>Big files in a phone browser</b> are bounded by memory and patience.</li>
+<li><b>What may be sent, to whom, with what consent</b> is the application's policy, exactly as with parcels. The signature makes it accountable; it doesn't make it allowed.</li></ul></div>
+</div>
+
+<h2 id="fit">How it fits what's already decided</h2>
+<table>
+<tr><th>concern</th><th>answer</th></tr>
+<tr><td>Two kinds of key: iroh dials ed25519 node ids; nostr identities are secp256k1</td><td>Different jobs. The nostr key is <i>who you are</i>; the iroh id is <i>where to dial</i>. The collective's signed member list (or its well-known file) says "reach <code>dorkyrobot/mini</code> at <code>iroh:…</code>", the way nostr relay lists say where someone writes.</td></tr>
+<tr><td>"A lightweight Rust binary"</td><td>kapwa stays 5 MB and dependency-light, because none of this is in it. The mover is its own small Rust binary that carries iroh's weight, installed only where bytes need to move.</td></tr>
+<tr><td>"A transport a shell script can't speak must never be the only one"</td><td>kapwa speaks only HTTP, permanently. (n0 does publish ESP32 examples, so small devices aren't shut out of moving bytes forever.)</td></tr>
+<tr><td>kita's blobs are sha256; iroh's are BLAKE3</td><td>Compute the BLAKE3 when something is shared, and let kita remember it as one more statement about the blob. A suggestion for kita, not a requirement on it.</td></tr>
+<tr><td>Node-to-node event sync without tunnels (<a href="protocol.html#scale">rung 6</a>)</td><td>The mover can expose a <i>local port</i> that is really a peer's kapwa, carried over iroh (n0's <code>dumbpipe</code> does exactly this today). kapwa's peer URL becomes <code>http://127.0.0.1:34xx</code> and kapwa never knows. The laptop comes off its flapping tunnel without kapwa changing at all.</td></tr>
+</table>
+
+<h2 id="spike">The ten-minute spike</h2>
+<div class="card lean"><p><code>sendme</code> is n0's own file-transfer tool, built on exactly these pieces. Two runs, on your own machines only:</p>
+<ol><li><b>mac2024 ↔ the mini, same network.</b> Proves the path and gives a throughput ceiling.</li>
+<li><b>mac2024 tethered to your phone ↔ the mini at home.</b> A real NAT on one side and a carrier's on the other, which is the hardest case there is. This one tells us whether it hole-punches or falls back to a relay, and at what speed.</li></ol>
+<pre><span class="c"># sender</span>
+$ sendme send ./big.bin
+<span class="c"># → prints a ticket</span>
+
+<span class="c"># receiver</span>
+$ sendme receive &lt;ticket&gt;</pre>
+<p class="dim">If it's direct and fast, <code>kapwa send</code> is a thin layer over a proven path. If it relays, a self-hosted relay is step one.</p></div>
+<h3>Run 1, done (2026-09-17): the mini → mac2024, same network</h3>
+<table>
+<tr><th></th><th>result</th></tr>
+<tr><td>100 MB</td><td><b>5.7 s</b> end to end, including connecting and writing the file: about 140 Mbit/s over the laptop's Wi-Fi. sha256 matched.</td></tr>
+<tr><td>600 MB, receiver killed after 4 s, then run again</td><td>Completed in 52 s (about 92 Mbit/s; the Wi-Fi varies) and <b>sha256 matched</b>. The tool's output doesn't say how much of the 40 MB partial it reused, so "resumes" is confirmed only as "recovers and verifies."</td></tr>
+<tr><td>direct or relayed?</td><td>The tool doesn't say. At these speeds on one network it is almost certainly direct; run 2 is the one that answers this for real.</td></tr>
+<tr><td>friction</td><td>The sender needs a terminal (it panics without one), so it can't be scripted as-is. Irrelevant for us: we'd use the library, not the tool.</td></tr>
+</table>
+<p class="dim"><code>sendme</code> is in Homebrew and is now installed on mac2024 and the mini, so it's usable today for moving files between them. Run 2 needs the laptop on your phone's hotspot.</p>
+<p class="dim">Sources: <a href="https://www.iroh.computer/blog/the-road-to-iroh-1-0">The road to iroh 1.0</a> · <a href="https://docs.iroh.computer/protocols/blobs">iroh blobs</a> · <a href="https://github.com/n0-computer/sendme">sendme</a> · <a href="https://docs.iroh.computer/languages/wasm-browser">iroh in browsers</a> · <a href="https://www.iroh.computer/blog/iroh-and-the-web">iroh &amp; the web</a> · <a href="https://docs.iroh.computer/concepts/relays">relays</a> · <a href="https://www.iroh.computer/blog/authenticated-relays">authenticated relays</a> · <a href="https://github.com/n0-computer/iroh-live">iroh-live</a> · <a href="https://github.com/n0-computer/iroh-roq">iroh-roq</a> · <a href="https://www.iroh.computer/solutions/video">video with MoQ</a> · <a href="https://github.com/n0-computer/iroh-esp32-examples">iroh ESP32 examples</a></p>
+</main>
+<footer>served from mac2024 · source in <code>Dorky-Robot/kapwa/ideas/</code></footer>
+</body></html>

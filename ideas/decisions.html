@@ -1,0 +1,223 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>kapwa · decisions</title><link rel="stylesheet" href="style.css"><style>td.mono{font-family:ui-monospace,Menlo,monospace;white-space:nowrap;color:#6b7075}</style></head><body>
+<header><div class="wrap"><span class="brand">kapwa <small>ideas &amp; options</small></span>
+<nav><a href="index.html">overview</a><a href="protocol.html">protocol</a><a href="collectives.html">collectives &amp; kita</a><a href="identity.html">identity</a><a href="bytes.html">moving bytes</a><a href="using.html">using it</a><a class="on" href="decisions.html">decisions</a><a href="background.html">background</a></nav></div></header>
+<main>
+<h1>Decisions</h1>
+<p class="lede">Every open question from every page, plus a few nobody had asked yet, in one register. Sorted by who needs to act: five that are genuinely yours, twenty where I have a default and will proceed unless you object, what's already settled, and what's deferred with the trigger that would reopen it.</p>
+<p><span class="tag open">your call</span> <span class="tag lean">default, unless you object</span> <span class="tag done">settled</span> <span class="tag next">deferred</span></p>
+
+<h2 id="yours">Your call <span class="tag open">5</span></h2>
+<div class="grid g2">
+<div class="card"><h3>Y1 · Who can see what? <span class="tag open">new · the big one</span></h3>
+<p>Today every event replicates to every node. Fine inside one collective; not once Monica's brokerage and Everyday Vet share a mesh with you.</p>
+<ul><li><b>a.</b> Everything to everyone (today)</li><li><b>b.</b> <span class="tag lean">lean</span> A node serves an event only to the author's collective and to collectives it is addressed to (<code>p</code> tags). Unaddressed events stay inside their collective.</li><li><b>c.</b> b, plus NIP-44 encryption for content that must not be readable even by relays</li></ul>
+<p class="dim">b costs a filter on two routes. It also bounds the injection channel: you only read what was said to you.</p></div>
+<div class="card"><h3>Y2 · How does a person find out? <span class="tag open">new</span></h3>
+<p>levee's own numbers say notification was the real failure: push fired 34 times a day against 9 actual messages. An <code>ask</code> nobody sees is an open loop forever.</p>
+<ul><li><b>a.</b> <span class="tag lean">lean</span> Web Push from the dashboard — everyday-vet-admin already does this (<code>web-push</code>, VAPID), so it's a port</li><li><b>b.</b> ntfy, self-hosted on the mini</li><li><b>c.</b> A text message through the A2P path, once approved</li></ul>
+<p class="dim">Only an <code>ask</code> addressed to you, never board churn.</p></div>
+<div class="card"><h3>Y3 · Are members visible across the boundary?</h3>
+<ul><li><b>a.</b> <span class="tag lean">lean</span> Yes, small: "everyday-vet (sara)". Accountability, and the list is public to peers anyway</li><li><b>b.</b> Only the collective; members are its own business</li></ul>
+<p class="dim">b is more "as one", but then personal signatures mean nothing outside.</p></div>
+<div class="card"><h3>Y4 · Where does a collective's root key live?</h3>
+<ul><li><b>a.</b> <span class="tag lean">lean, to start</span> On its always-on node. Simple; the node can update the member list itself</li><li><b>b.</b> Offline (or in your passkey via PRF); the node holds only a listed machine key. Safer; adding a member needs you</li></ul>
+<p class="dim">a → b is a key rotation later, which NIP-05 makes survivable.</p></div>
+<div class="card"><h3>Y5 · Do we commit to nostr?</h3>
+<p>You asked whether identity is where to lean on it; I said yes, emphatically. It is the single most structural default below (ids, signing, names, membership all follow), so I'd rather hear it than assume it.</p>
+<p class="dim"><a href="identity.html">identity</a></p></div>
+</div>
+
+<h2 id="defaults">Defaults I'll proceed on unless you object <span class="tag lean">20</span></h2>
+<table>
+<tr><th></th><th>question</th><th>default</th></tr>
+<tr><td class="mono">D1</td><td>Item ids: slug, hash, or writer-prefixed?</td><td>An item is its creating event; the CLI takes any unambiguous prefix. Slugs become an optional alias tag.</td></tr>
+<tr><td class="mono">D2</td><td>How many verbs?</td><td>Four plus <code>ask</code>. The ten from the mental model are optional layer-2 vocabulary.</td></tr>
+<tr><td class="mono">D3</td><td>Messages between agents in the ledger?</td><td>Yes, without a new kind: a <code>say --to</code> with no item <i>is</i> a message; the inbox is "said to you, not yet answered."</td></tr>
+<tr><td class="mono">D4</td><td>Is a person read-only?</td><td>No. People use the same verbs, from the CLI now and the dashboard later. Answering an <code>ask</code> is the "decision"; no separate verb.</td></tr>
+<tr><td class="mono">D5</td><td>Claim semantics</td><td>Provisional, and say so; <code>take --wait</code> returns CLAIMED · LOST to x · OWN. Leases via an <code>expiration</code> tag once heartbeats exist. No arbiter.</td></tr>
+<tr><td class="mono">D6</td><td>Clock trust (new)</td><td>Earliest <code>created_at</code> wins only among members of one collective, whose clocks are its own. An item addressed <code>--to</code> a collective can only be taken by that collective. Cross-collective races on unaddressed work are deferred.</td></tr>
+<tr><td class="mono">D7</td><td>How aggressive are hooks?</td><td><code>prime</code> on startup · resume · compact, a heartbeat on Stop. Nothing per prompt.</td></tr>
+<tr><td class="mono">D8</td><td>May <code>kapwa setup claude</code> edit settings.json?</td><td>Yes, showing the diff and writing a backup first. <code>--print</code> for the cautious.</td></tr>
+<tr><td class="mono">D9</td><td>One binary or two?</td><td>One, named <code>kapwa</code>: <code>kapwa serve</code> is the node (built), the rest is the client (next).</td></tr>
+<tr><td class="mono">D10</td><td>Domain nouns</td><td>None: no person's name in a status, no product list. <code>ask --to</code> a participant; products are just tags. (The status is <code>asked</code>.)</td></tr>
+<tr><td class="mono">D11</td><td>One voice across a collective's machines?</td><td>Yes. Boards fold <code>dorkyrobot/*</code> into one voice; the machine shows in the detail view.</td></tr>
+<tr><td class="mono">D12</td><td>What gets signed first?</td><td>Layer 1: the node signs every event. Personal signatures later, only where a human's word matters.</td></tr>
+<tr><td class="mono">D13</td><td>How do people, agents and machines get keys?</td><td>People: a key bound through Pocket ID unchanged (OpenPubkey nonce). Agents and machines: key files. PRF-derived keys later, as an upgrade.</td></tr>
+<tr><td class="mono">D14</td><td>Relationships and context</td><td>References may carry a word; a payload may be a kita act (both generic, D20). Parcels are additive only, and ids keep their home prefix.</td></tr>
+<tr><td class="mono">D15</td><td>Where does the kita bridge live, and does the operator get special powers?</td><td>In each application (authentication and "what may leave" are the application's). No: Dorky Robot is one more collective; operating the machines is ssh, not kapwa.</td></tr>
+<tr><td class="mono">D16</td><td>Spec, vectors, MCP, envelope</td><td><code>spec/</code> and <code>vectors/</code> in the repo, Rust as the reference; nodes store and serve events verbatim; add <code>source</code> to the envelope; MCP not built unless a harness can't shell out.</td></tr>
+<tr><td class="mono">D17</td><td>The N×N problem: full mesh, or a p2p stack?</td><td>Neither. Topology by collective (leaves → hub, hubs ↔ hubs, two upstreams each), plus an <code>ETag</code> and long-poll on <code>/api/writers</code>. Hypercore doesn't fit a light Rust binary; iroh is the option if we ever want a direct transport. <a href="protocol.html#scale">the ladder</a></td></tr>
+<tr><td class="mono">D18</td><td>Files and streams between people and machines</td><td><b>A separate tool, not part of kapwa</b> (your instinct, 2026-09-17). Bytes and streams move over iroh in their own small Rust binary; the mover doesn't need kapwa at all; when it wants a durable, signed record it <i>says</i> offers and receipts on kapwa like any agent, as an opaque payload (D20). It can also give kapwa a tunnel-free path as a local port. Start with a <code>sendme</code> spike between your own machines (Doug's mini is excluded for now); a self-hosted relay before any client-facing use. <a href="bytes.html">moving bytes</a></td></tr>
+<tr><td class="mono">D20</td><td>Does kapwa know its siblings?</td><td><b>No, not even kita</b> (your question, 2026-09-17). Two generic slots any protocol may use: <code>["ref", uri, word?]</code> and <code>["payload", type, string]</code>. Every event still carries a plain sentence. Riders are ordinary agents, never depend on kapwa, and kapwa's spec never names one. <a href="protocol.html#riders">riders</a></td></tr>
+<tr><td class="mono">D19</td><td>Laptops, phones and browsers as real nodes</td><td>"Hub" is a property (always on, reachable), not a role. A node that can't be pulled from <b>publishes its own signed events</b> to any reachable peer through the existing <code>POST /api/event</code>; same contiguous-<code>seq</code> rule as mirrors. The phone is an installable web app first (a TypeScript second implementation, key from a passkey via PRF); a native app only when direct transfers matter. <a href="protocol.html#nodes">every device is a node</a></td></tr>
+</table>
+
+<h2 id="settled">Settled <span class="tag done">in your words</span></h2>
+<ul>
+<li>A pull system that is fault tolerant.</li>
+<li>Rust, one static binary with no runtime dependencies (after a day in Elixir).</li>
+<li>kita and kapwa are complements and are not meant to overlap.</li>
+<li>Both are protocols, implementable on different stacks for different systems.</li>
+<li>The mesh must be cryptographically signed: "we need to know who is who."</li>
+<li>Collectives — practices, brokerages — are to be treated as one.</li>
+<li>Keep it small: easy to start, like JavaScript; nostr and Scuttlebutt as the reference points.</li>
+<li>The name is <b>kapwa</b>: the shared self, the other as fellow. Hostnames follow <code>kapwa-&lt;box&gt;.felixflor.es</code>. Focus on your own machines first; other collectives' nodes are paused for now.</li>
+<li>Laptops and phones should be real nodes, "like a true p2p network"; that is what fault tolerance is for.</li>
+</ul>
+
+<h2 id="deferred">Deferred, with what would reopen it <span class="tag next">12</span></h2>
+<table>
+<tr><th>what</th><th>reopen when</th></tr>
+<tr><td>Incremental fold (today it re-reads every event per write)</td><td>a committed script shows the fold over budget; measure, don't assert</td></tr>
+<tr><td>Log compaction / snapshots</td><td>a node's cold start is noticeably slow</td></tr>
+<tr><td><code>prev</code>-hash chain per writer (provable truncation and equivocation)</td><td>a collective you don't operate joins</td></tr>
+<tr><td>NIP-77 negentropy sync</td><td><code>since=seq</code> stops being enough (many writers, partial interest)</td></tr>
+<tr><td>Random-k gossip with peer exchange</td><td>one collective has dozens of machines</td></tr>
+<tr><td>A tunnel-free path between nodes, via the mover's local port (kapwa unchanged)</td><td>tunnels between nodes become the bottleneck or the flaky part (the laptop already hints at it)</td></tr>
+<tr><td>PRF-derived personal keys (needs a second passkey on our domain)</td><td>a personal signature is needed often enough that a stored key feels wrong</td></tr>
+<tr><td>Corrections following a parcel</td><td>"send it again" has hurt once</td></tr>
+<tr><td>Curated scopes as the parcel unit</td><td>"the ring, minus what the app withholds" sends too much or too little</td></tr>
+<tr><td>Cross-collective races on unaddressed work; contract-net bidding</td><td>it happens</td></tr>
+<tr><td>Dashboard that writes; LiveView-style updates</td><td>after the CLI; as a sandbox page with variants first</td></tr>
+<tr><td>Product-scoped roles and read scopes</td><td>probably never: collectives plus Y1 replace them</td></tr>
+</table>
+
+<h2 id="kita">Suggestions for kita — your repo, your rules</h2>
+<ul>
+<li>Define <code>Act::id</code> over the landed line's bytes rather than <code>serde_json::to_string</code>.</li>
+<li>Lift the refusal examples in <code>kernel.md</code> into vector files; name the wire ("an act is one JSON line") on its own short page.</li>
+<li>When a parcel lands, say where it came from: a <code>from</code> statement to the sender's participant, beside the prefixed id and <code>source</code>. Cheap, and it lets <code>ask</code> filter on it.</li>
+</ul>
+
+<h2 id="housekeeping">Small housekeeping <span class="tag lean">will do unless told otherwise</span></h2>
+<ul>
+<li>Remove brew <code>elixir</code>/<code>erlang</code> from the mini and mac2019 (left from the Elixir day).</li>
+<li>Make <code>deploy.sh</code> retry launchd's "Bootstrap failed: 5" longer (hit once on Doug's mini).</li>
+<li>This site is public, unauthenticated, and on the laptop. Leave it unless you'd rather it lived on the mini.</li>
+</ul>
+
+<h2 id="variants">The earlier side-by-sides</h2>
+<p class="dim">Kept for the reasoning and the mock output behind D3, D5, D7 and D8.</p>
+<details><summary>Claim semantics — provisional vs arbitrated vs lease</summary>
+<h2 id="claims">2 · Claim semantics</h2>
+<p>Beads and Blackboard have one database, so a claim is atomic. Ours is many logs: you can win locally and lose after the next pull (<a href="protocol.html#mechanics">timeline</a>). The question is what the CLI tells the agent.</p>
+<div class="side">
+<div class="card lean"><h3>A · Provisional, say so <span class="tag lean">lean</span></h3>
+<pre>$ kapwa take sp-7f3k2
+<span class="y">claimed (provisional)</span> · peers pull within 5 s
+confirm: kapwa show sp-7f3k2
+
+$ kapwa take sp-7f3k2 --wait
+<span class="g">CLAIMED</span>            <span class="c"># pulled peers, re-folded, still yours</span>
+<span class="r">LOST to grok</span>      <span class="c"># someone claimed 1.2 s before you</span>
+<span class="b">OWN</span>               <span class="c"># you already had it</span></pre>
+<ul class="pros"><li>Honest; no new machinery</li><li><code>--wait</code> gives Blackboard's verdict shape when it matters</li><li>Works offline (provisional until it isn't)</li></ul>
+<ul class="cons"><li>Agents must learn one more rule</li><li>~5 s to certainty</li></ul></div>
+<div class="card"><h3>B · Arbitrated claims</h3>
+<pre>$ kapwa take sp-7f3k2
+<span class="g">CLAIMED</span>   <span class="c"># mini (the arbiter) said yes, synchronously</span></pre>
+<p>One node (the always-on mini) owns claims. Others forward <code>claim</code> to it and record the answer.</p>
+<ul class="pros"><li>Atomic; agents never lose after the fact</li></ul>
+<ul class="cons"><li>Claims stop working when the arbiter or the path to it is down — the exact case pull was chosen for</li><li>Two write paths; the pure-pull story breaks for one verb</li></ul></div>
+<div class="card"><h3>C · Lease + heartbeat</h3>
+<pre>$ kapwa take sp-7f3k2 --for 30m
+<span class="y">claimed (provisional)</span> until 12:45 unless renewed</pre>
+<p>A claim expires unless the session heartbeats. Stale claims free themselves.</p>
+<ul class="pros"><li>Solves the <i>other</i> problem — dead sessions holding work</li></ul>
+<ul class="cons"><li>Doesn't change the race; complements A rather than replacing it</li></ul></div>
+</div>
+<div class="q"><b>My read:</b> A now, C alongside it via the session events in §4. B only if provisional claims actually bite in practice.</div>
+
+
+</details>
+<details><summary>Messages between agents — events vs notes vs out of scope</summary>
+<h2 id="mail">3 · Messages between agents</h2>
+<p>Beads has a <code>message</code> type with threads; Gas Town has mail. The charter says "pointers only" and "so Felix is not the paste bus." Those pull in opposite directions.</p>
+<div class="side">
+<div class="card lean"><h3>A · Messages as events <span class="tag lean">lean</span></h3>
+<pre>$ kapwa say --to grok-cto --re sp-7f3k2 \
+    "EV brand approved; number attached"
+sent sp-9k1p0 → grok-cto
+
+<span class="c"># in grok-cto's next `kapwa prime`:</span>
+inbox (1)
+  from claude · re sp-7f3k2 · 4m ago
+  EV brand approved; number attached</pre>
+<ul class="pros"><li>Same log, same fold, same replication, same deny-list</li><li>Removes the last reason to paste between chats</li></ul>
+<ul class="cons"><li>Board drifts from "pointers only" toward a chat</li><li>Needs a read/ack marker so inboxes empty</li></ul></div>
+<div class="card"><h3>B · Notes only</h3>
+<pre>$ kapwa say sp-7f3k2 \
+    "@grok-cto EV brand approved; number attached"</pre>
+<p>No inbox; mentions surface in <code>prime</code> as "notes addressed to you".</p>
+<ul class="pros"><li>No new kind; everything stays attached to an item</li></ul>
+<ul class="cons"><li>Nothing to say that isn't about an item</li><li>Mentions are convention, not structure</li></ul></div>
+<div class="card"><h3>C · Out of scope</h3><p>Messaging stays in whatever the agents already use (Slack, SendMessage). kapwa holds pointers.</p>
+<ul class="pros"><li>Charter stays pure</li></ul><ul class="cons"><li>Felix stays the bus for anything cross-harness</li></ul></div>
+</div>
+
+
+</details>
+<details><summary>Hook aggressiveness — start + compact vs per-prompt deltas vs Stop summaries</summary>
+<h2 id="hooks">4 · How aggressive should hooks be?</h2>
+<p>Claude Code can inject text at <code>SessionStart</code> (startup, resume, <b>compact</b>), before every prompt (<code>UserPromptSubmit</code>), and after every reply (<code>Stop</code>).</p>
+<div class="side">
+<div class="card lean"><h3>A · Prime at start + after compaction <span class="tag lean">lean</span></h3>
+<pre>SessionStart (startup|resume|compact)
+  → kapwa prime --hook
+
+Stop
+  → kapwa beat --hook     <span class="c"># heartbeat only</span></pre>
+<p>The board is in context at the beginning and again whenever compaction would have lost it. Nothing per turn.</p>
+<ul class="pros"><li>Cheap; a few hundred tokens per injection</li><li>Heartbeats make stale-claim detection possible</li></ul>
+<ul class="cons"><li>An <code>ask</code> that lands mid-session isn't seen until the next compaction</li></ul></div>
+<div class="card"><h3>B · Also deltas per prompt</h3>
+<pre>UserPromptSubmit
+  → kapwa prime --delta
+
+<span class="c"># only what changed since the last injection</span></pre>
+<ul class="pros"><li>Agents see new inbox / blockers within one turn</li></ul>
+<ul class="cons"><li>An HTTP call before every prompt; noise if the board is busy</li><li>Needs a per-session cursor</li></ul></div>
+<div class="card"><h3>C · Stop posts a summary</h3>
+<pre>Stop → if this session holds claims:
+  kapwa note &lt;id&gt; \
+    -m "$(last_assistant_message | head -c 400)"</pre>
+<ul class="pros"><li>Handoffs write themselves</li></ul>
+<ul class="cons"><li>Chatty; agents don't always end a turn at a meaningful point</li><li>Easy to leak things that shouldn't be on the board</li></ul></div>
+</div>
+
+
+</details>
+<details><summary>kapwa setup — edit settings.json vs print the snippet</summary>
+<h2 id="setup">5 · May <code>kapwa setup claude</code> edit <code>~/.claude/settings.json</code>?</h2>
+<div class="side">
+<div class="card lean"><h3>A · Yes, with a diff and a backup <span class="tag lean">lean</span></h3>
+<pre>$ kapwa setup claude
+will add to ~/.claude/settings.json:
+  hooks.SessionStart[startup|resume|compact] → kapwa prime --hook
+  hooks.Stop → kapwa beat --hook
+backup → ~/.claude/settings.json.bak.20260917
+proceed? [y/N]</pre>
+<ul class="pros"><li>One command per machine; this is what makes it unmissable</li><li>Same idea as <code>bd setup claude</code></li></ul>
+<ul class="cons"><li>Touches a file other tools also edit</li></ul></div>
+<div class="card"><h3>B · Print the snippet</h3>
+<pre>$ kapwa setup claude --print
+{ "hooks": { "SessionStart": [ … ] } }</pre>
+<ul class="pros"><li>Never surprises you</li></ul>
+<ul class="cons"><li>Four machines × copy-paste × every change</li></ul></div>
+</div>
+
+
+</details>
+<details><summary>Not on the table, on purpose</summary>
+<h2>Not on the table (on purpose)</h2>
+<div class="grid g3">
+<div class="card"><h3>Role hierarchy</h3><p class="dim">Gas Town's mayor/polecat model. kapwa is a ledger; harnesses decide who does what.</p></div>
+<div class="card"><h3>File / build locks</h3><p class="dim">Blackboard's. Worktrees already solve it, and it's per-machine anyway.</p></div>
+<div class="card"><h3>Knowledge with decay</h3><p class="dim">diwa's job. kapwa points at things; it doesn't remember for you.</p></div>
+</div>
+
+</details>
+</main>
+<footer>served from mac2024 · source in <code>Dorky-Robot/kapwa/ideas/</code></footer>
+</body></html>

@@ -1,0 +1,75 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>kapwa · ideas</title><link rel="stylesheet" href="style.css"></head><body>
+<header><div class="wrap"><span class="brand">kapwa <small>ideas &amp; options</small></span>
+<nav><a class="on" href="index.html">overview</a><a href="protocol.html">protocol</a><a href="collectives.html">collectives &amp; kita</a><a href="identity.html">identity</a><a href="bytes.html">moving bytes</a><a href="using.html">using it</a><a href="decisions.html">decisions</a><a href="background.html">background</a></nav></div></header>
+<main>
+<h1>The coordination layer for the mesh</h1>
+<p class="lede">One process per machine. Agents talk to the node on their own machine; nodes pull each other's logs; people read one board. kita is what a collective <i>knows</i>; kapwa is what collectives <i>owe each other</i>. This site is the design sandbox: the current position, the reasoning behind it, and every open question in one place.</p>
+
+<div class="status">
+  <div class="card"><div class="dim">nodes live</div><div class="big">4</div><div class="dim">mini · mac2024 · mac2019 · doug-mini</div></div>
+  <div class="card"><div class="dim">binary</div><div class="big">5.2 MB</div><div class="dim">Rust, static, no runtime deps</div></div>
+  <div class="card"><div class="dim">replication</div><div class="big">pull</div><div class="dim">every 5 s, backoff to 5 m</div></div>
+  <div class="card"><div class="dim">open questions</div><div class="big">5 + 20</div><div class="dim"><a href="decisions.html">5 your call · 20 defaults to confirm</a></div></div>
+</div>
+
+<h2>Where we stand, in ten lines</h2>
+<ol>
+<li><b>Every writer owns one append-only log</b>; nodes pull each other by <code>seq</code>; the board is a deterministic fold. <a href="protocol.html">protocol</a></li>
+<li><b>The whole protocol fits on an index card</b>, and day one is four verbs: <code>say · take · drop · done</code>, plus <code>ask</code>. Everything else is an optional convention. <a href="protocol.html#card">the card</a></li>
+<li><b>It is a protocol, not an app</b>: test vectors are the contract; Rust is the reference, with shell, TypeScript and C implementations expected. <a href="protocol.html#protocol">why</a></li>
+<li><b>kita and kapwa are complements and never overlap</b>. One question sorts any feature: is it about what we know, or what we owe? <a href="collectives.html#treaty">the treaty</a></li>
+<li><b>A collective is one participant</b>: a practice or a brokerage speaks with one voice. <code>writer</code> = the collective, <code>by</code> = the member. <a href="collectives.html#asone">as one</a></li>
+<li><b>kapwa carries other protocols without knowing them</b>, kita included: a reference, a typed payload, and always a plain sentence. <a href="protocol.html#riders">riders</a> · <a href="collectives.html#context">carrying context</a></li>
+<li><b>Identity is nostr's</b>: signed NIP-01 events, NIP-05 names on each collective's domain, membership as a list. People's keys bind through Pocket ID; agents and machines use key files. <a href="identity.html">identity</a></li>
+<li><b>The CLI and <code>curl</code> are the interface</b>; a hook puts the board in an agent's context at start and after compaction. MCP only if a harness can't shell out. <a href="using.html">using it</a></li>
+<li><b>No domain nouns</b>, borrowed from kita: no person's name in a status, no product list. A brokerage must be able to run the same binary as a vet practice.</li>
+<li><b>Keep it small.</b> If it doesn't fit on the card it's a convention, and nobody has to learn it.</li>
+</ol>
+
+<h2>The mesh as it runs today</h2>
+<figure>
+<svg viewBox="0 0 760 340" role="img" aria-label="mesh topology">
+  <defs><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#27c"/></marker></defs>
+  <!-- nodes -->
+  <g><rect class="node" x="60" y="40" width="200" height="70" rx="8"/><text class="svgt" x="75" y="65">mini</text><text class="svgd" x="75" y="83">kapwa-mini.felixflor.es · always on</text><text class="svgd" x="75" y="98">dashboard · id.felixflor.es</text></g>
+  <g><rect class="node laptop" x="500" y="40" width="200" height="70" rx="8"/><text class="svgt" x="515" y="65">mac2024</text><text class="svgd" x="515" y="83">kapwa-mac2024.felixflor.es · laptop</text><text class="svgd" x="515" y="98">flaps on Wi-Fi · replicate-first</text></g>
+  <g><rect class="node laptop" x="60" y="230" width="200" height="70" rx="8"/><text class="svgt" x="75" y="255">mac2019</text><text class="svgd" x="75" y="273">kapwa-mac2019.felixflor.es · Intel</text><text class="svgd" x="75" y="288">x86_64 cross-build from mac2024</text></g>
+  <g><rect class="node" x="500" y="230" width="200" height="70" rx="8"/><text class="svgt" x="515" y="255">doug-mini</text><text class="svgd" x="515" y="273">another collective's node</text><text class="svgd" x="515" y="288">paused for now</text></g>
+  <!-- pulls (each direction) -->
+  <path class="arrow" d="M260,65 L500,65"/><path class="arrow" d="M500,85 L260,85"/>
+  <path class="arrow" d="M150,110 L150,230"/><path class="arrow" d="M170,230 L170,110"/>
+  <path class="arrow" d="M590,110 L590,230"/><path class="arrow" d="M610,230 L610,110"/>
+  <path class="arrow" d="M260,255 L500,255"/><path class="arrow" d="M500,275 L260,275"/>
+  <path class="arrow dim" d="M250,110 L510,230"/><path class="arrow dim" d="M510,110 L250,230"/>
+  <text class="svgd" x="330" y="55">pull /api/log/&lt;writer&gt;?since=</text>
+  <text class="svgd" x="330" y="175" text-anchor="middle">every node also serves what it mirrored,</text>
+  <text class="svgd" x="330" y="190" text-anchor="middle">so a log reaches you while its author sleeps</text>
+  <!-- agents -->
+  <rect class="pill" x="300" y="300" width="160" height="26" rx="13"/><text class="svgt" x="380" y="317" text-anchor="middle">agents → 127.0.0.1:3410</text>
+</svg>
+<figcaption>Blue arrows are HTTPS pulls through cloudflared routes, authenticated with the shared mesh token. Dashed boxes are machines that sleep. A node that peers with only some of the others still sees every log, because each node serves what it has mirrored.</figcaption>
+</figure>
+
+
+
+<h2>Built, and designed</h2>
+<table>
+<tr><th>running on the mesh today</th><th>designed here, not built</th></tr>
+<tr><td>per-writer logs, pull by <code>seq</code>, contiguous-only ingest<br>the fold; earliest claim wins, loser recorded<br>mesh token · agent keys · Pocket ID dashboard; fail closed<br>one static binary, cross-compiled for Intel; <code>deploy.sh</code><br>routes <code>kapwa-&lt;box&gt;.felixflor.es</code></td>
+<td>the <code>kapwa</code> CLI and its four verbs; one binary<br>events as signed nostr events; keys, names, membership<br>collectives as writers; worded tags; parcels<br><code>prime</code> + hooks; heartbeats and stale claims<br>spec pages and test vectors</td></tr>
+</table>
+
+<h2>Pages</h2>
+<ol>
+<li><a href="protocol.html">Protocol</a> — the card, logs · pull · fold, four verbs, layers, the failure cases as run, what makes it a protocol.</li>
+<li><a href="collectives.html">Collectives &amp; kita</a> — the treaty, a collective as one participant, the bridge, carrying context.</li>
+<li><a href="identity.html">Identity</a> — leaning on nostr, what gets signed, how people, agents and machines get keys.</li>
+<li><a href="bytes.html">Moving bytes</a> — files and streams, peer to peer, over iroh, as a <i>third tool</i>: kita knows, kapwa owes, a mover moves.</li>
+<li><a href="using.html">Using it</a> — the CLI, what a hook injects, discovery.</li>
+<li><a href="decisions.html">Decisions</a> — every open question: yours, mine to confirm, settled, deferred.</li>
+<li><a href="background.html">Background</a> — the mental model, lessons from MCP and from Scuttlebutt → nostr, eleven real-world coordination systems, prior art.</li>
+</ol>
+</main>
+<footer>served from mac2024 · source in <code>Dorky-Robot/kapwa/ideas/</code></footer>
+</body></html>

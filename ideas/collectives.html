@@ -1,0 +1,238 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>kapwa · collectives & kita</title><link rel="stylesheet" href="style.css"><style>.col text,.g text{font:12px ui-monospace,Menlo,monospace}.box{fill:#fff;stroke:#1d1f21;stroke-width:1.2}.mem{fill:#eef6ff;stroke:#27c}.voice{fill:#f3f0fb;stroke:#7a4bd6}.idp{fill:#e8f6ee;stroke:#2a7}.wire{stroke:#7a4bd6;stroke-width:1.6;fill:none}.n{fill:#fff;stroke:#1d1f21;stroke-width:1.2}.it{fill:#f3f0fb;stroke:#7a4bd6}.fd{fill:#eef6ff;stroke:#27c}.ed{stroke:#7a4bd6;stroke-width:1.4;fill:none}.tre td{vertical-align:top}.never{color:#c33}.always{color:#2a7}</style></head><body>
+<header><div class="wrap"><span class="brand">kapwa <small>ideas &amp; options</small></span>
+<nav><a href="index.html">overview</a><a href="protocol.html">protocol</a><a class="on" href="collectives.html">collectives &amp; kita</a><a href="identity.html">identity</a><a href="bytes.html">moving bytes</a><a href="using.html">using it</a><a href="decisions.html">decisions</a><a href="background.html">background</a></nav></div></header>
+<main>
+<h1>Collectives &amp; kita</h1>
+<p class="lede">kita is what a collective <i>knows</i>. kapwa is what collectives <i>owe each other</i>. They are the same idea at two scales — an append-only log of attributed acts, the present derived by replay — and they are complements that must not overlap. That division is what lets a whole practice or brokerage act as one participant.</p>
+<div class="q"><b>kapwa knows nothing about kita.</b> Everything on this page is kita, and the applications built on it, <i>using</i> kapwa through two generic slots any protocol may use: a reference and a typed payload (<a href="protocol.html#riders">riders</a>). The treaty below is a promise about scope, not a dependency in either direction.</div>
+<h2 id="treaty">The treaty</h2>
+<p>One question sorts any feature: <b>is it about what we know, or about what we owe?</b></p>
+<table class="tre">
+<tr><th></th><th>kita — what a collective <i>knows</i></th><th>kapwa — what collectives <i>owe each other</i></th></tr>
+<tr><td>lives</td><td>inside one collective</td><td>between collectives, and between the agents and people in them</td></tr>
+<tr><td class="always">always</td><td>content with identity; statements between things; questions answered with citations</td><td>commitments, handoffs, questions for a human, pointers</td></tr>
+<tr><td class="never">never</td><td>crosses a boundary · replicates to another collective · routes anything · knows another kita exists</td><td>stores content · answers "what do we know" · holds a record or PHI · grows a graph or a query language</td></tr>
+<tr><td>order</td><td>one writer's order, one log</td><td>many logs, merged by <code>(at, writer, seq)</code></td></tr>
+<tr><td>trust</td><td>everyone inside is trusted; authentication is the application's</td><td>nobody outside is trusted; every line is signed</td></tr>
+</table>
+<h3>The seam is exactly three things</h3>
+<div class="grid g3">
+<div class="card"><h3>1 · Participants</h3><p>A kapwa identity names a participant in some collective's kita. The collective is itself a participant — in its own kita and in its neighbours'.</p></div>
+<div class="card"><h3>2 · References — bare, or with an excerpt</h3><p><code>["ref","kita:monica:d310","about"]</code> points home (to kapwa it is just a URI it doesn't understand). When the receiver needs to see, the sender's application may attach the ring as a kita act; kapwa carries it unread (<a href="#context">below</a>).</p></div>
+<div class="card"><h3>3 · Envelope words</h3><p>Who, when, what produced it: kita's <code>who · at · source</code>, kapwa's <code>by · at · source</code>. Same meanings, so a bridge is a rename, not a translation.</p></div>
+</div>
+<p class="dim">Anything that wants a fourth seam is a sign one protocol is growing into the other.</p>
+
+
+<h2>kita2 in eight lines</h2>
+<div class="side">
+<div class="card"><ul>
+<li><b>Two things, five operations, one door.</b> Nodes and statements; <code>make · unmake · change · say · unsay</code>; <code>land(act)</code> is the only way in.</li>
+<li>An <b>act</b> lands whole or is refused whole. Refusals are structural, never about meaning.</li>
+<li><b>The log is the only storage</b>; the graph is the log replayed.</li>
+<li>Every act carries an envelope: <code>who</code> (a node id), <code>at</code>, <code>source</code> (the tool that built it).</li>
+<li><b>An act's id is a hash of its contents</b> — delivered twice, applied once.</li>
+<li><b>No domain nouns, anywhere.</b> A practice, a household, a firm and a brokerage are one product wearing different words.</li>
+<li>No UI; authentication is the application's, permanently.</li>
+<li>One kita per collective. <code>Store::share</code> lets several programs on one machine share it; nothing crosses machines yet.</li></ul></div>
+<div class="card"><h3>The detail that matters here</h3>
+<p>everyday-vet-admin's README: <i>"A kita born empty gets its practice participant at first start (from <code>EV_PRACTICE_NAME</code>)."</i></p>
+<p><b>The collective is already a participant in its own kita.</b> "Everyday Vet" is a node, exactly like Sara is a node. Things can be said about it, and acts can be attributed to it. kita never distinguished a person from a group — a participant is just "a named dot that things get said about."</p>
+<p class="dim">That is the hook. kapwa doesn't need a concept of "organization." It needs to let a participant be a collective.</p></div>
+</div>
+
+
+<details><summary>Side by side: kita and kapwa as siblings</summary>
+
+<table>
+<tr><th></th><th>kita2</th><th>kapwa</th></tr>
+<tr><td>atom</td><td>act — a batch of ops, atomic</td><td>event — one speech act</td></tr>
+<tr><td>storage</td><td>append-only log; graph = replay</td><td>append-only log per writer; board = fold</td></tr>
+<tr><td>attribution</td><td><code>who</code> (node id), stamped by the session, never the client</td><td><code>by</code> (key name), stamped by the node, never the body</td></tr>
+<tr><td>idempotency</td><td>act id = content hash</td><td><code>(writer, seq)</code></td></tr>
+<tr><td>vocabulary</td><td>open: any word is valid the moment it's used</td><td>open: unknown kinds and fields are kept and ignored</td></tr>
+<tr><td>refuses</td><td>structurally only</td><td>structurally only (auth, shape)</td></tr>
+<tr><td>writers</td><td>one log, one machine (several faces via <code>Store::share</code>)</td><td>many logs, many machines, pull-replicated</td></tr>
+<tr><td>scope</td><td><b>inside</b> one collective — private, rich, may hold PHI</td><td><b>between</b> collectives and their agents — thin, pointers only</td></tr>
+<tr><td>question</td><td>what do we know?</td><td>who has promised what to whom?</td></tr>
+</table>
+<div class="q"><b>Reading.</b> kita has no answer for crossing a machine or an organizational boundary, by design. kapwa has no answer for knowledge, by design. Neither should grow the other's half.</div>
+
+
+</details>
+<h2>A collective is three things</h2>
+<figure>
+<svg class="col" viewBox="0 0 760 330" role="img" aria-label="collectives">
+  <defs><marker id="ak" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7a4bd6"/></marker></defs>
+  <!-- collective template x3 -->
+  <g>
+    <rect class="box" x="20" y="30" width="220" height="200" rx="12"/><text x="35" y="52" font-weight="600">Dorky Robot</text>
+    <rect class="mem" x="35" y="65" width="190" height="40" rx="6"/><text x="45" y="82">kita — memory</text><text class="svgd" x="45" y="97">what we know</text>
+    <rect class="idp" x="35" y="112" width="190" height="40" rx="6"/><text x="45" y="129">Pocket ID — membership</text><text class="svgd" x="45" y="144">id.felixflor.es</text>
+    <rect class="voice" x="35" y="159" width="190" height="56" rx="6"/><text x="45" y="176">kapwa — voice</text><text class="svgd" x="45" y="191">mini · mac2024 · mac2019</text><text class="svgd" x="45" y="205">felix · claude · grok-cto</text>
+  </g>
+  <g>
+    <rect class="box" x="270" y="30" width="220" height="200" rx="12"/><text x="285" y="52" font-weight="600">Everyday Vet</text>
+    <rect class="mem" x="285" y="65" width="190" height="40" rx="6"/><text x="295" y="82">kita — memory</text><text class="svgd" x="295" y="97">records stay here (PHI)</text>
+    <rect class="idp" x="285" y="112" width="190" height="40" rx="6"/><text x="295" y="129">Pocket ID — membership</text><text class="svgd" x="295" y="144">staff sign in here</text>
+    <rect class="voice" x="285" y="159" width="190" height="56" rx="6"/><text x="295" y="176">kapwa — voice</text><text class="svgd" x="295" y="191">one node</text><text class="svgd" x="295" y="205">sara · front desk · its agent</text>
+  </g>
+  <g>
+    <rect class="box" x="520" y="30" width="220" height="200" rx="12"/><text x="535" y="52" font-weight="600">Monica's brokerage</text>
+    <rect class="mem" x="535" y="65" width="190" height="40" rx="6"/><text x="545" y="82">kita — memory</text><text class="svgd" x="545" y="97">listings, clients</text>
+    <rect class="idp" x="535" y="112" width="190" height="40" rx="6"/><text x="545" y="129">Pocket ID — membership</text><text class="svgd" x="545" y="144">id.homesforsalebymonica.com</text>
+    <rect class="voice" x="535" y="159" width="190" height="56" rx="6"/><text x="545" y="176">kapwa — voice</text><text class="svgd" x="545" y="191">doug-mini</text><text class="svgd" x="545" y="205">doug · monica · their agents</text>
+  </g>
+  <path class="wire" d="M130,230 C130,290 380,290 380,232" marker-end="url(#ak)"/><path class="wire" d="M380,230 C380,300 630,300 630,232" marker-end="url(#ak)"/><path class="wire" d="M630,230 C630,320 130,320 130,232" marker-end="url(#ak)"/>
+  <text class="svgd" x="380" y="282" text-anchor="middle">kapwa between them: commitments and pointers, never the records</text>
+</svg>
+<figcaption>Your mesh is already shaped like this: each network has its own Pocket ID, its own tunnel, its own machines. Doug's mini <i>is</i> Monica's brokerage. What's missing is the name for the box.</figcaption>
+</figure>
+
+
+<h2 id="asone">"As one": the writer is the collective, <code>by</code> is the member</h2>
+<p>kapwa already separates <i>whose log it landed in</i> from <i>who acted</i>. Today <code>writer</code> is a machine. Let it be a collective, and the outside world sees one voice while the inside keeps attribution:</p>
+<div class="side">
+<div class="card"><h3>What Dorky Robot sees</h3>
+<pre><span class="b">everyday-vet</span> said  4a1c8
+  "SMS consent text needs the clinic's legal name"
+  → to dorkyrobot
+
+<span class="b">dorkyrobot</span> took it            <span class="c"># (claude)</span>
+<span class="b">dorkyrobot</span> done: "updated; see PR 212"
+<span class="b">everyday-vet</span> 👍               <span class="c"># (sara)</span></pre>
+<p class="dim">You address the practice, not Sara. Whoever is on duty there picks it up — a person or the practice's agent. The member is shown small, or not at all.</p></div>
+<div class="card"><h3>The event underneath</h3>
+<pre>{"writer":"everyday-vet","seq":88,"at":"…",
+ "by":"sara",
+ "kind":"note","id":"4a1c8",
+ "note":"SMS consent text needs the clinic's legal name",
+ "tags":[["to","dorkyrobot"],
+         ["ref","kita:ev:d2877"]]}</pre>
+<p class="dim">Nothing new in the protocol: <code>writer</code> names the collective, <code>by</code> the member, and two tags carry the addressee and a pointer home.</p></div>
+</div>
+<p>Inside a collective with several machines (yours), each machine keeps its own log — that's what makes offline writing safe — and the writer name carries both: <code>dorkyrobot/mini</code>, <code>dorkyrobot/mac2024</code>. Nodes of one collective trust each other fully; across collectives, scoped. Anything that renders a board folds <code>dorkyrobot/*</code> into one voice.</p>
+
+
+<h2 id="bridge">The bridge does two things</h2>
+<p>The seams are what the two protocols <i>share</i>. The bridge is the small piece of each application that <i>uses</i> them. It lives in the application, because authentication and "what may leave" are the application's.</p>
+<div class="grid g2">
+<div class="card"><h3>Lands what crossed</h3><p>kapwa events that involve this collective land as ordinary acts: <code>source:"kapwa"</code>, <code>who</code> = the remote collective's participant, a dot with the text, <code>about</code> the things it points at. Then "what did we promise Dorky Robot?" is an <code>ask</code>, and <code>chat</code> can cite it.</p><p class="dim">Idempotent both ways: acts are content-addressed, events are <code>(writer, seq)</code>. The bridge can crash and re-run.</p></div>
+<div class="card"><h3>Speaks out</h3><p>A convention, not a mechanism: an act that says <code>say(d, "ask", other_collective)</code> is something the application may publish as a kapwa <code>say --to</code>, with a reference back to <code>d</code> and, when the receiver needs to see, the ring around it as a parcel.</p></div>
+</div>
+<h2 id="context">Carrying context: kapwa carries kita's grammar, not kita's meaning</h2>
+<p>kita's whole grammar is one shape: <code>say(from, word, to)</code>, with an open vocabulary — "any word you use is valid the moment you use it." kapwa already has a slot with that shape: a <b>tag</b>. And kita already has a self-contained, plain-JSON unit for "some things and how they connect": an <b>act</b>. So:</p>
+<div class="grid g2">
+<div class="card lean"><h3>1 · A reference may carry a word <span class="tag lean">relations</span></h3>
+<p>A tag that points at something can say <i>how</i> it relates. Subject is always "this item"; the word is free; the object is an item, a participant, or a dot in somebody's kita.</p>
+<pre>["e", "a81b…", "depends-on"]     <span class="c"># item → item</span>
+["e", "77c0…", "duplicates"]
+["p", "5d30…", "decided-by"]     <span class="c"># item → participant</span>
+["ref", "kita:monica:d310", "about"] <span class="c"># item → a dot at home</span></pre>
+<p class="dim">This is nostr's existing "marker" position on a tag, used with kita's rule for words. No list of allowed words in the protocol — Berners-Lee's "two people never chose the same keywords." The fold understands two or three (<code>depends-on</code> is what makes <code>ready</code> mean something) and keeps the rest.</p></div>
+<div class="card lean"><h3>2 · A payload may be a kita act <span class="tag lean">a parcel of context</span></h3>
+<p>When pointers aren't enough — the receiver can't see inside your kita — send the neighbourhood itself: the <b>ring</b> around the subject, written as an ordinary act of <code>make</code> and <code>say</code>. kernel.md: an act is "plain data — the same shape in memory, on the wire, and as one line in the log."</p>
+<p>kapwa doesn't read it. "Unknown kinds and fields are kept, and ignored" was already the rule; a parcel is just content kapwa has no opinion about.</p></div>
+</div>
+
+
+<h3>Worked example</h3>
+<p>Monica's brokerage asks Dorky Robot to fix something. The sentence alone is useless; the ring around it is the job.</p>
+<div class="side">
+<figure>
+<svg class="g" viewBox="0 0 380 300" role="img" aria-label="the ring being sent">
+  <defs><marker id="ac" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7a4bd6"/></marker></defs>
+  <rect class="it" x="110" y="120" width="160" height="44" rx="8"/><text x="190" y="140" text-anchor="middle" font-weight="600">the request</text><text class="svgd" x="190" y="156" text-anchor="middle">"photos stopped syncing"</text>
+  <rect class="fd" x="10" y="20" width="140" height="40" rx="8"/><text x="80" y="44" text-anchor="middle">12 Oak St</text>
+  <rect class="fd" x="230" y="20" width="140" height="40" rx="8"/><text x="300" y="44" text-anchor="middle">Dana (agent)</text>
+  <rect class="fd" x="10" y="230" width="140" height="40" rx="8"/><text x="80" y="254" text-anchor="middle">PhotoVendor</text>
+  <rect class="fd" x="230" y="230" width="140" height="40" rx="8"/><text x="300" y="248" text-anchor="middle">"same thing in</text><text x="300" y="262" text-anchor="middle">March, fixed by…"</text>
+  <path class="ed" d="M150,120 L95,60" marker-end="url(#ac)"/><text class="svgd" x="92" y="95">about</text>
+  <path class="ed" d="M300,60 L150,40" marker-end="url(#ac)"/><text class="svgd" x="200" y="38">lists</text>
+  <path class="ed" d="M230,164 L290,230" marker-end="url(#ac)"/><text class="svgd" x="270" y="198">like</text>
+  <path class="ed" d="M80,230 L80,60" marker-end="url(#ac)"/><text class="svgd" x="18" y="150">shoots for</text>
+  <path class="ed" d="M150,164 L95,230" marker-end="url(#ac)"/><text class="svgd" x="72" y="205">via</text>
+</svg>
+<figcaption>Five things and five statements. Inside Monica's kita this is one <code>look</code>: the subject and its ring.</figcaption>
+</figure>
+<div class="card"><h3>What crosses</h3>
+<pre>{
+  "kind": 7410,
+  "pubkey": "…monica's brokerage…",
+  "tags": [
+    ["v", "say"],
+    ["p", "5d30…", "to"],           <span class="c"># dorkyrobot</span>
+    ["ref", "kita:monica:r88", "about"],
+    ["payload", "kita/act", "{…below…}"]
+  ],
+  "content": "Photos stopped syncing for 12 Oak St",
+  <span class="c"># the payload, unpacked. kapwa never parses it:</span>
+  "payload": {
+    "who": "monica:p2",
+    "source": "kapwa-parcel",
+    "ops": [
+     {"op":"make","id":"monica:d310","payload":"12 Oak St"},
+     {"op":"make","id":"monica:p7","payload":"Dana"},
+     {"op":"make","id":"monica:p9","payload":"PhotoVendor"},
+     {"op":"make","id":"monica:d144","payload":
+        "Same thing in March; fixed by re-issuing the vendor's key"},
+     {"op":"make","id":"monica:r88","payload":
+        "Photos stopped syncing for 12 Oak St"},
+     {"op":"say","from":"monica:r88","word":"about","to":"monica:d310"},
+     {"op":"say","from":"monica:p7","word":"lists","to":"monica:d310"},
+     {"op":"say","from":"monica:p9","word":"shoots-for","to":"monica:d310"},
+     {"op":"say","from":"monica:r88","word":"via","to":"monica:p9"},
+     {"op":"say","from":"monica:r88","word":"like","to":"monica:d144"}
+    ]
+  },
+  "sig": "…"
+}</pre>
+<p class="dim">Every event carries a sentence a person or an agent can read without any rider installed. The typed payload rides beside it as a string kapwa stores and never opens.</p></div>
+</div>
+
+
+<h3>What each side does with it</h3>
+<div class="grid g3">
+<div class="card"><h3>The sender's application</h3><p>Picks the subject, takes its ring to the depth that matters, leaves out what shouldn't travel, and compiles it to an act. That choice is <b>authorship</b>: the parcel is something the collective deliberately said outward, signed, and accountable for.</p></div>
+<div class="card"><h3>kapwa</h3><p>Signs, stores, replicates, shows "has context (5 things)". It never indexes, queries, folds or validates a parcel. Delete kita from the world and kapwa behaves identically.</p></div>
+<div class="card"><h3>The receiver</h3><p><b>An agent</b> reads it as-is: five makes and five says is about as legible as context gets for a model. <b>An application</b> may <i>land</i> it in its own kita — <code>source:"kapwa"</code>, <code>who</code> = the sender's participant — so it's connected to everything else it knows about Monica's brokerage. Or it may not. kapwa doesn't care.</p></div>
+</div>
+
+
+<h3>The honest tension: a parcel is a copy</h3>
+<p>kita exists because copies drift; Nelson's line is its creed. A parcel is a copy that crosses a boundary. Three things keep it honest:</p>
+<table>
+<tr><th>rule</th><th>why</th></tr>
+<tr><td><b>Ids keep their home.</b> <code>monica:d310</code>, never a fresh local id</td><td>Landed twice, it's the same node (acts are idempotent). And everyone can tell it is a <i>view of a foreign dot</i>, not a native one.</td></tr>
+<tr><td><b>Corrections can follow.</b> A later parcel with <code>change monica:d310 …</code> updates every place it landed</td><td>"Correct it in one place" extends across the boundary for as long as the sender keeps saying so. Whether the receiver keeps listening is its application's choice, not a protocol feature.</td></tr>
+<tr><td><b>Parcels are additive.</b> Only <code>make</code>, <code>say</code>, <code>change</code>; never <code>unmake</code></td><td>Nobody deletes from your kita over the wire. A retraction is a new statement you may honour.</td></tr>
+</table>
+<p>And the rules that were already there do the rest: <b>bytes don't travel</b> (a scan or recording stays a pointer; the application serves it, with its own authorization); <b>what to include is the application's call</b>, so PHI stays a sender-side responsibility with a signature attached; <b>content is data, never instructions</b>, and now it's attributed data from a provable key.</p>
+
+
+<h2>What kapwa should take from kita's rules</h2>
+<table>
+<tr><th>kita rule</th><th>what it fixes in kapwa</th></tr>
+<tr><td><b>No domain nouns</b></td><td>No person's name in a status, no hard-coded product list. <code>ask --to &lt;participant&gt;</code>, and products are just tags. Otherwise a brokerage can't run the same binary as a practice.</td></tr>
+<tr><td><b>Act id = hash of contents</b></td><td>Free, collision-proof item ids — the hash-id decision answers itself, and it's the nostr shape too.</td></tr>
+<tr><td><b>Envelope: who · at · source</b></td><td>Add <code>source</code> to events (<code>cli</code>, <code>hook</code>, <code>bridge</code>, <code>import</code>). "Who is answerable" and "what produced it" are different questions; kapwa only answers the first.</td></tr>
+<tr><td><b>Structural refusal only</b></td><td>Already ours. Keep the fold forgiving; never reject on meaning.</td></tr>
+<tr><td><b>Measure, don't assert</b></td><td>The fold re-reads everything per write. Fine today; commit the script that says when it isn't.</td></tr>
+<tr><td><b>Words from the graph's own family</b></td><td>kita: dot, act, land, door. kapwa should pick one family and declare it, not drift between board / ledger / log.</td></tr>
+</table>
+
+
+<h2 id="unify">The tempting unification, and why not</h2>
+<div class="side">
+<div class="card"><h3>Make a kapwa log a kita log</h3><p>Items become nodes, <code>take</code> becomes <code>say(item, "taken-by", p)</code>, the board becomes an <code>ask</code>. One kernel, one format, and the bridge disappears.</p>
+<ul class="pros"><li>One idea at every scale</li><li>The board gets kita's whole query layer</li></ul>
+<ul class="cons"><li>The kernel refuses an act that references an id it hasn't seen. With many logs arriving out of order, that is the normal case, not an error</li><li>kita's order is one writer's order; kapwa's is <code>(at, writer, seq)</code> across many</li><li>kita rule 7: don't build the general mechanism until the second occurrence earns it</li></ul></div>
+<div class="card lean"><h3>Keep two, share the seams <span class="tag lean">lean</span></h3><p>Same envelope words, same id scheme, one pointer convention, one bridge. Each stays small enough to reimplement in an afternoon.</p>
+<p class="dim">kernel.md already anticipates "a second machine syncing old data" (expunge leaves a scar for exactly that). When kita grows sync, revisit — kapwa's per-writer log with <code>seq</code> is a reasonable candidate for how.</p></div>
+</div>
+
+
+</main>
+<footer>served from mac2024 · source in <code>Dorky-Robot/kapwa/ideas/</code></footer>
+</body></html>

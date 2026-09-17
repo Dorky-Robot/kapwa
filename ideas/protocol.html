@@ -1,0 +1,340 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>kapwa · protocol</title><link rel="stylesheet" href="style.css"><style>.layers rect{stroke-width:1.2}.layers text{font:12px ui-monospace,Menlo,monospace}</style></head><body>
+<header><div class="wrap"><span class="brand">kapwa <small>ideas &amp; options</small></span>
+<nav><a href="index.html">overview</a><a class="on" href="protocol.html">protocol</a><a href="collectives.html">collectives &amp; kita</a><a href="identity.html">identity</a><a href="bytes.html">moving bytes</a><a href="using.html">using it</a><a href="decisions.html">decisions</a><a href="background.html">background</a></nav></div></header>
+<main>
+<h1>The protocol</h1>
+<p class="lede">Three ideas: every writer owns one log, replication is a pull by sequence number, and the board is a deterministic fold over all logs. The whole wire contract fits on an index card, and the vocabulary you need on day one is four verbs.</p>
+<h2 id="card">The whole protocol on an index card</h2>
+<p>This is the test: if it doesn't fit, it isn't the protocol, it's a convention.</p>
+<pre><span class="b">KAPWA</span>  <span class="c">v1</span>
+
+<span class="y">event</span>   {"kind": "...", "id": "...", ...anything you like}
+        the node adds:  writer  seq  at  by
+
+<span class="y">write</span>   POST /api/event
+        <span class="c">Authorization: Bearer &lt;your key&gt;</span>
+<span class="y">read</span>    GET  /api/board.txt
+        <span class="c">Authorization: Bearer &lt;your key&gt;</span>
+<span class="y">sync</span>    GET  /api/log/&lt;writer&gt;?since=&lt;seq&gt;
+        <span class="c">Authorization: Bearer &lt;mesh token&gt;</span>
+
+<span class="y">rules</span>   append-only.  the key is your name.
+        unknown kinds and fields are kept, and ignored.</pre>
+<p class="dim">This is v1, exactly what the four nodes run. With <a href="identity.html">signing</a>, the event becomes a nostr event and the three routes stay as they are.</p>
+<p>That already exists and already works. Hello world is two lines, no SDK, no install:</p>
+<pre>curl localhost:3410/api/event \
+  -H "Authorization: Bearer $KEY" \
+  -d '{"kind":"note","id":"hello","note":"hi from a shell"}'
+
+curl localhost:3410/api/board.txt \
+  -H "Authorization: Bearer $KEY"</pre>
+
+
+<h2 id="verbs">Day one: four verbs</h2>
+<div class="side">
+<div class="card lean"><h3>What you type</h3>
+<pre>$ kapwa say "A2P profile is stuck on ISV"          <span class="c"># makes an item</span>
+said 7f3c2
+
+$ kapwa                                            <span class="c"># the board</span>
+$ kapwa take 7f3c2                              <span class="c"># I've got it</span>
+$ kapwa say 7f3c2 "support case 29429182 open"  <span class="c"># a note on it</span>
+$ kapwa ask 7f3c2 "Direct or ISV? only you know" <span class="c"># pulls the cord</span>
+$ kapwa done 7f3c2 "reclassed"
+$ kapwa drop 7f3c2                              <span class="c"># changed my mind</span></pre>
+<p class="dim">No flags needed. No id needed to start. Forgiving like JS: sloppy input makes something reasonable rather than an error.</p></div>
+<div class="card"><h3>What it maps to</h3>
+<table><tr><th>verb</th><th>event kind today</th></tr>
+<tr><td><code>say</code> (no id)</td><td>create</td></tr><tr><td><code>say &lt;id&gt;</code></td><td>note</td></tr>
+<tr><td><code>take</code></td><td>claim</td></tr><tr><td><code>drop</code></td><td>release</td></tr>
+<tr><td><code>done</code></td><td>resolve</td></tr><tr><td><code>ask</code></td><td>a note addressed to a participant (<code>--to</code>), shown first to them</td></tr></table>
+<p class="dim">Nothing new in the node. The mental model (open loops, commitments) stays as the <i>lens</i> for what the board shows — not as ceremony anyone has to perform.</p></div>
+</div>
+
+
+<h2>Layers: you never have to learn the next one</h2>
+<figure>
+<svg class="layers" viewBox="0 0 760 250" role="img" aria-label="layers">
+  <rect x="40" y="180" width="680" height="50" rx="8" fill="#fffdf5" stroke="#c9b458"/><text x="60" y="202" font-weight="600">0 · the card</text><text class="svgd" x="60" y="220">one event shape · POST, GET board, GET log · frozen. An ESP32 or a bash script lives here forever.</text>
+  <rect x="100" y="115" width="560" height="50" rx="8" fill="#f3f0fb" stroke="#7a4bd6"/><text x="120" y="137" font-weight="600">1 · four verbs</text><text class="svgd" x="120" y="155">say · take · drop · done  (+ ask, to pull the cord). What every agent and human uses on day one.</text>
+  <rect x="160" y="50" width="440" height="50" rx="8" fill="#eef6ff" stroke="#27c"/><text x="180" y="72" font-weight="600">2 · conventions ("KIPs"), each optional</text><text class="svgd" x="180" y="90">handoff offer/accept · decide · heartbeats · intent fields · acks · signatures</text>
+  <text class="svgd" x="620" y="80">a node that doesn't</text><text class="svgd" x="620" y="94">know one still works</text>
+</svg>
+<figcaption>Nostr's trick: NIP-01 is the protocol; every other NIP is a convention over <code>kind</code> and <code>tags</code> that clients may ignore. Same here. The ten verbs from the mental-model page are layer 2 vocabulary, not protocol. The fold already skips what it doesn't know.</figcaption>
+</figure>
+
+
+<h2 id="mechanics">How it works</h2>
+<h3>1 · Every writer owns one log</h3>
+<div class="side">
+<figure>
+<svg viewBox="0 0 360 230" role="img" aria-label="per-writer logs on one node">
+  <text class="svgt" x="10" y="18">~/.kapwa/ on mini</text>
+  <rect class="node" x="10" y="30" width="340" height="60" rx="6"/><text class="svgt" x="22" y="52">log/mini.jsonl</text><text class="svgd" x="22" y="70">the only file this node appends to · seq 1…412</text>
+  <rect class="node" x="10" y="105" width="340" height="110" rx="6" style="stroke:#bbb"/><text class="svgt" x="22" y="127">mirror/</text>
+  <text class="svgd" x="40" y="148">mac2024.jsonl   pulled · seq 1…9</text>
+  <text class="svgd" x="40" y="166">mac2019.jsonl   pulled · seq 1…3</text>
+  <text class="svgd" x="40" y="184">doug-mini.jsonl pulled · seq 1…1</text>
+  <text class="svgd" x="40" y="204" style="fill:#c33">never appended to locally</text>
+</svg>
+<figcaption>There is nothing to merge because two nodes never write the same file.</figcaption>
+</figure>
+<div class="card"><h3>One event, six fixed fields</h3>
+<pre>{<span class="y">"writer"</span>:<span class="g">"mini"</span>, <span class="y">"seq"</span>:412, <span class="y">"at"</span>:<span class="g">"2026-09-16T23:25:46.102Z"</span>,
+ <span class="y">"by"</span>:<span class="g">"claude"</span>, <span class="y">"kind"</span>:<span class="g">"claim"</span>, <span class="y">"id"</span>:<span class="g">"kita-sms"</span>,
+ <span class="y">"note"</span>:<span class="g">"taking it"</span>}</pre>
+<dl class="kv"><dt>writer</dt><dd>whose log — set by the node</dd><dt>seq</dt><dd>contiguous per writer — the replication cursor</dd><dt>at</dt><dd>fold order</dd><dt>by</dt><dd>who acted — from the key, never the body</dd><dt>kind, id</dt><dd>what and to which item</dd></dl>
+</div>
+</div>
+
+<h3>2 · Replication is a pull by <code>seq</code></h3>
+<figure>
+<svg viewBox="0 0 760 250" role="img" aria-label="pull sequence">
+  <defs><marker id="ah2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#27c"/></marker></defs>
+  <text class="svgt" x="120" y="20" text-anchor="middle">mac2024 (puller)</text><text class="svgt" x="640" y="20" text-anchor="middle">mini</text>
+  <line x1="120" y1="30" x2="120" y2="240" stroke="#ccc"/><line x1="640" y1="30" x2="640" y2="240" stroke="#ccc"/>
+  <path d="M120,55 L640,55" stroke="#27c" stroke-width="1.4" marker-end="url(#ah2)"/><text class="svgd" x="380" y="48" text-anchor="middle">GET /api/writers   Authorization: Bearer &lt;mesh token&gt;</text>
+  <path d="M640,85 L120,85" stroke="#27c" stroke-width="1.4" marker-end="url(#ah2)"/><text class="svgd" x="380" y="78" text-anchor="middle">{"mini":412, "mac2019":3, "doug-mini":1, "mac2024":9}</text>
+  <text class="svgd" x="20" y="112">I have mini@400 → behind by 12</text>
+  <path d="M120,135 L640,135" stroke="#27c" stroke-width="1.4" marker-end="url(#ah2)"/><text class="svgd" x="380" y="128" text-anchor="middle">GET /api/log/mini?since=400</text>
+  <path d="M640,165 L120,165" stroke="#27c" stroke-width="1.4" marker-end="url(#ah2)"/><text class="svgd" x="380" y="158" text-anchor="middle">[ {seq:401…}, … {seq:412…} ]</text>
+  <text class="svgd" x="20" y="195">append to mirror/mini.jsonl only if each seq == last+1</text>
+  <text class="svgd" x="20" y="212">a gap → stop, ask again next tick. never write a hole.</text>
+  <text class="svgd" x="20" y="236" style="fill:#2a7">idempotent · resumable · nothing to dedupe</text>
+</svg>
+<figcaption>Asked twice, the same answer. Crashed mid-pull, ask again from where you stopped. A relay (mini serving mac2019's log) is the same request against a mirror.</figcaption>
+</figure>
+
+<h3>3 · The board is a fold</h3>
+<div class="side">
+<div class="card"><h3>Order</h3><p>All events from all logs sorted by <code>(at, writer, seq)</code>, then applied one by one. Every node runs the same fold on the same events and gets the same board. <code>at</code> first is what makes "earliest claim wins" mean the same thing everywhere; <code>writer</code> then <code>seq</code> break ties deterministically.</p>
+<table><tr><th>kind</th><th>effect</th></tr>
+<tr><td>create</td><td>new item; a second create for the id is a note</td></tr>
+<tr><td>claim</td><td>owner = by if unowned or already by; else recorded as lost</td></tr>
+<tr><td>release</td><td>owner = "" if owner == by</td></tr>
+<tr><td>status / priority</td><td>set value</td></tr>
+<tr><td>assign / resolve</td><td>owner = to / status = done</td></tr>
+<tr><td>note</td><td>history only</td></tr>
+<tr><td><i>unknown</i></td><td>kept in the log, ignored by the fold — a newer node can write what an older one skips</td></tr></table></div>
+<figure>
+<svg viewBox="0 0 380 250" role="img" aria-label="contested claim timeline">
+  <text class="svgt" x="10" y="18">contested claim, from the demo</text>
+  <line x1="40" y1="40" x2="40" y2="230" stroke="#ccc"/>
+  <circle cx="40" cy="60" r="5" fill="#27c"/><text class="svgt" x="55" y="64">t+0.0  grok@b  claim a2p-owner</text>
+  <circle cx="40" cy="100" r="5" fill="#27c"/><text class="svgt" x="55" y="104">t+1.0  claude@a  claim a2p-owner</text>
+  <text class="svgd" x="55" y="120">neither has pulled yet: A shows owner=claude</text>
+  <circle cx="40" cy="150" r="5" fill="#7a4bd6"/><text class="svgt" x="55" y="154">t+6  both pulled, both re-folded</text>
+  <text class="svgd" x="55" y="170">A: owner=grok   B: owner=grok</text>
+  <rect x="55" y="185" width="300" height="40" rx="6" fill="#fff8e6" stroke="#f1dfa5"/>
+  <text class="svgd" x="65" y="202" style="fill:#8a6100">history on a2p-owner:</text><text class="svgt" x="65" y="218">claude: claim lost to grok</text>
+</svg>
+<figcaption>No coordination at write time; one deterministic tiebreak at read time. The loser's attempt stays in history so it can see why. This is also the one place the design is honest about being eventually consistent — see <a href="decisions.html#defaults">D5 in decisions</a>.</figcaption>
+</figure>
+</div>
+
+
+<h2 id="proof">The four failure cases, as run</h2>
+<details><summary>Show the demo output (peer down · catch up · concurrent claim · auth boundaries)</summary>
+
+<p class="dim">From <code>kapwa/scripts/two-node.sh</code>, unedited apart from trimming.</p>
+<div class="grid g2">
+<div class="card"><h3>Peer down</h3><pre>kapwa · grok@b · 2 items · 2 open
+logs claude@a@2 · grok@b@2
+peers http://127.0.0.1:3410 <span class="r">down since 03:18:40Z Connection refused</span>
+
+in motion (1)
+  P1  kita-sms   portfolio claimed  claude  Kita SMS depends on company A2P
+open (1)
+  P0  a2p-owner  a2p       open     —       Company A2P owned by A2P Ops</pre><p class="dim">B kept reading its mirror and writing its own log. Stale is a visible state, not a failure.</p></div>
+<div class="card"><h3>Come back, catch up</h3><pre>kapwa · claude@a · 2 items · 2 open
+logs claude@a@2 · grok@b@2
+peers http://127.0.0.1:3411 <span class="g">ok 03:18:48Z</span>
+
+in motion (1)
+  P1  kita-sms   portfolio claimed  claude  …
+open (1)
+  P0  a2p-owner  a2p       open     —       …</pre><p class="dim">A pulled <code>since=0</code> for a writer it had never seen. No merge step.</p></div>
+<div class="card"><h3>Concurrent claim</h3><pre>A, before pulling:   "owner":"claude"
+A, after pulling:    "owner":"grok"
+B:                   "owner":"grok"
+
+contested (1)
+  a2p-owner   claude: claim lost to grok (03:18:51.211Z)</pre></div>
+<div class="card"><h3>Auth boundaries</h3><pre>/api/writers, no token:    HTTP 401
+/api/writers, mesh token:  HTTP 200
+POST /api/event, bad key:  HTTP 401
+/  (no OIDC configured):   HTTP 503</pre><p class="dim">Fail closed. Nothing is open but <code>/healthz</code> and the sign-in flow.</p></div>
+</div>
+
+
+</details>
+<h2 id="riders">Riders: what kapwa carries without knowing</h2>
+<p>kapwa is an envelope and a ledger: who said what to whom, about which item, in what order, signed. It is deliberately ignorant of everything else, <b>including kita</b>. Other protocols ride it the way attachments ride email: SMTP has never known what a PDF is.</p>
+<div class="side">
+<div class="card lean"><h3>Two generic slots, no named siblings</h3>
+<pre>["ref", "kita:monica:d310", "about"]
+<span class="c"># a reference: some URI, and optionally a word for</span>
+<span class="c"># how this item relates to it. kapwa knows no schemes.</span>
+
+["payload", "kita/act", "…"]
+["payload", "hatid/offer", "…"]
+<span class="c"># one opaque string, with a type. kapwa stores it,</span>
+<span class="c"># signs it, delivers it, and never opens it.</span></pre>
+<p>Neither is new: both are already covered by the card's last line, "unknown kinds and fields are kept, and ignored." This just names the convention so riders agree on where to put things.</p></div>
+<div class="card"><h3>The rules that keep it honest</h3><ul>
+<li><b>Every event still reads as a sentence.</b> <code>content</code> is for people and agents; a payload is for the rider. The board makes sense with no rider installed.</li>
+<li><b>A rider is just an agent.</b> It uses the same verbs through the same CLI and HTTP. No plugins, no hooks, no registration.</li>
+<li><b>A rider never depends on kapwa.</b> kita works alone; the mover works alone. They use kapwa when they want a durable, signed, addressed record.</li>
+<li><b>Payloads are small</b> (a cap, say 64 KB). Anything larger is bytes, and bytes are the mover's job.</li>
+<li><b>Opaque cuts both ways:</b> kapwa can't screen what it can't read. What may leave a collective is the rider's and its application's responsibility, with a signature attached.</li></ul></div>
+</div>
+<table>
+<tr><th>rider</th><th>its own job</th><th>what it puts on kapwa</th></tr>
+<tr><td><a href="collectives.html">kita</a></td><td>what a collective knows</td><td>references into itself; a ring of context as <code>kita/act</code></td></tr>
+<tr><td><a href="bytes.html">the mover</a></td><td>files and streams, peer to peer</td><td>"I'm offering you this", "received, verified" as <code>hatid/offer</code>, <code>hatid/receipt</code></td></tr>
+<tr><td><i>whatever comes next</i></td><td>a calendar, an invoice, a build</td><td>its own type. kapwa's spec doesn't change</td></tr>
+</table>
+
+<h2 id="scale">Scaling: it never needed a full mesh</h2>
+<p>Today every node pulls every other node every 5 seconds. That is N×(N−1) edges, and it's a <i>configuration</i>, not a property of the protocol. Because every node serves the logs it has mirrored, replication works over <b>any connected graph</b>: Doug's mini already peers with only two of your three machines and still has mac2019's log. The question is only which graph.</p>
+<figure>
+<svg viewBox="0 0 760 250" role="img" aria-label="full mesh versus hubs">
+  <defs><marker id="as" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#27c"/></marker></defs>
+  <text class="svgt" x="150" y="18" text-anchor="middle">today: everyone pulls everyone</text>
+  <g stroke="#c33" stroke-width="1" opacity=".55">
+   <line x1="150" y1="50" x2="245" y2="105"/><line x1="150" y1="50" x2="220" y2="200"/><line x1="150" y1="50" x2="80" y2="200"/><line x1="150" y1="50" x2="55" y2="105"/>
+   <line x1="245" y1="105" x2="220" y2="200"/><line x1="245" y1="105" x2="80" y2="200"/><line x1="245" y1="105" x2="55" y2="105"/>
+   <line x1="220" y1="200" x2="80" y2="200"/><line x1="220" y1="200" x2="55" y2="105"/><line x1="80" y1="200" x2="55" y2="105"/></g>
+  <g fill="#fff" stroke="#1d1f21"><circle cx="150" cy="50" r="9"/><circle cx="245" cy="105" r="9"/><circle cx="220" cy="200" r="9"/><circle cx="80" cy="200" r="9"/><circle cx="55" cy="105" r="9"/></g>
+  <text class="svgd" x="150" y="238" text-anchor="middle">N×(N−1) edges, each polled every 5 s</text>
+
+  <text class="svgt" x="540" y="18" text-anchor="middle">by collective: leaves → hub, hubs ↔ hubs</text>
+  <g stroke="#27c" stroke-width="1.4">
+   <line x1="440" y1="120" x2="540" y2="70"/><line x1="540" y1="70" x2="650" y2="120"/><line x1="440" y1="120" x2="650" y2="120" stroke-dasharray="4 3"/>
+   <line x1="440" y1="120" x2="395" y2="190" stroke="#999"/><line x1="440" y1="120" x2="455" y2="200" stroke="#999"/>
+   <line x1="540" y1="70" x2="540" y2="35" stroke="#999"/>
+   <line x1="650" y1="120" x2="640" y2="200" stroke="#999"/><line x1="650" y1="120" x2="705" y2="185" stroke="#999"/></g>
+  <g fill="#f3f0fb" stroke="#7a4bd6" stroke-width="1.4"><circle cx="440" cy="120" r="12"/><circle cx="540" cy="70" r="12"/><circle cx="650" cy="120" r="12"/></g>
+  <g fill="#fff" stroke="#1d1f21"><circle cx="395" cy="190" r="8"/><circle cx="455" cy="200" r="8"/><circle cx="540" cy="35" r="8"/><circle cx="640" cy="200" r="8"/><circle cx="705" cy="185" r="8"/></g>
+  <text class="svgd" x="440" y="150" text-anchor="middle">dorkyrobot</text><text class="svgd" x="585" y="62">everyday-vet</text><text class="svgd" x="650" y="150" text-anchor="middle">monica</text>
+  <text class="svgd" x="540" y="238" text-anchor="middle">≈ N edges; purple = always-on hub; dashed = only if they work together</text>
+</svg>
+<figcaption>This is the same answer the ecosystems we're borrowing from reached: Scuttlebutt's pubs, nostr's relays and its "outbox model" (you publish where you write; readers fetch from there). Nobody meshes clients.</figcaption>
+</figure>
+
+<h3>The ladder — take a rung only when the one below hurts</h3>
+<table>
+<tr><th></th><th>step</th><th>what it buys</th><th>cost</th></tr>
+<tr><td>1</td><td><b>Topology by collective.</b> Machines pull their collective's always-on node; hubs pull the hubs they work with. Each leaf lists two upstreams so a hub is never a single point of failure.</td><td>≈ N edges instead of N². Cross-collective edges exist only where there's a relationship</td><td>Config only. Works with today's binary</td></tr>
+<tr><td>2</td><td><b>Make an idle edge nearly free.</b> <code>/api/writers</code> answers with an <code>ETag</code> of the seq vector (304 when nothing changed), and accepts <code>?wait=25</code>: the request is held until something lands</td><td>Idle cost ≈ one tiny request per 25 s per edge; propagation drops from "up to 5 s per hop" to a round trip. Still pull, still <code>curl</code></td><td>~40 lines in the node</td></tr>
+<tr><td>3</td><td><b>Pull only what you may see</b> (decision Y1): across a boundary, only events addressed to you</td><td>Cross-collective traffic becomes tiny and the seq vector stays short</td><td>A filter on two routes</td></tr>
+<tr><td>4</td><td><b>Random k upstreams + peer exchange</b> inside a very large collective: each node pulls k ≈ 3 peers learned from <code>/.well-known/kapwa.json</code></td><td>Classic epidemic gossip: N·k edges, everything everywhere in O(log N) rounds, no hub at all</td><td>Small; only if one collective ever has dozens of machines</td></tr>
+<tr><td>5</td><td><b>Set reconciliation</b> (nostr's NIP-77 negentropy) instead of a seq vector</td><td>Syncing thousands of writers costs kilobytes</td><td>A library; only with very many writers</td></tr>
+<tr><td>6</td><td><b>A direct path without tunnels</b>, provided from outside: the <a href="bytes.html">mover</a> exposes a local port that is really a peer's kapwa, carried over iroh</td><td>No cloudflared between nodes; a laptop on flaky Wi-Fi stops depending on its tunnel</td><td>Nothing in kapwa: a peer URL becomes <code>127.0.0.1:34xx</code>. kapwa speaks only HTTP, permanently</td></tr>
+</table>
+<div class="side">
+<div class="card"><h3>Does it matter yet?</h3>
+<table><tr><th>nodes</th><th>full mesh, 5 s poll</th><th>hubs + long-poll</th></tr>
+<tr><td>4 (today)</td><td>0.6 req/s per node</td><td>—</td></tr>
+<tr><td>30 <span class="dim">(10 collectives × 3)</span></td><td>5.8 req/s per node · 174 mesh-wide</td><td>a leaf holds 1–2 idle requests; a hub ≈ 11</td></tr>
+<tr><td>100</td><td>20 req/s per node · ~2,000 mesh-wide</td><td>unchanged per node</td></tr></table>
+<p class="dim">Rungs 1–3 are enough for anything on the horizon. Worst-case path is leaf → hub → hub → leaf: three hops, sub-second with long-poll.</p></div>
+<div class="card"><h3>"Shouldn't we build on something proven?"</h3>
+<table>
+<tr><th></th><th>fit for a light Rust binary</th></tr>
+<tr><td><b>Hypercore / Hyperswarm</b></td><td><span class="tag skip">no</span> JS-first. The Rust ports are unfinished (<code>hyperswarm-rs</code> is unreleased), so it means a Node sidecar. It also brings its own log format and signatures, which would fight the nostr decision.</td></tr>
+<tr><td><b>libp2p</b></td><td><span class="tag skip">no</span> Capable and heavy; a framework to live inside, not a library to add.</td></tr>
+<tr><td><b>nostr relays + negentropy</b></td><td><span class="tag steal">the pattern</span> Hub-and-spoke with efficient hub↔hub sync is exactly rungs 1 and 5, already specified.</td></tr>
+<tr><td><b>iroh</b> (1.0, June 2026)</td><td><span class="tag steal">yes, but not inside kapwa</span> Rust-native and the right base for <a href="bytes.html">moving bytes</a>, as its own tool. kapwa benefits through a local port (rung 6) without linking it.</td></tr>
+<tr><td><b>foca</b> (SWIM in Rust)</td><td><span class="tag steal">maybe</span> Tiny membership + failure detection, if peers ever need to be discovered rather than configured.</td></tr>
+</table></div>
+</div>
+<div class="q"><b>The principle from day one still holds:</b> the data model is the protocol; the transport is swappable. Per-writer logs, signed events and pull-by-cursor work over HTTP, and HTTP can itself be carried over anything. kapwa never needs to know what is underneath, and a shell script or an ESP32 can always speak it.</div>
+
+<h2 id="nodes">Every device is a node: laptops, phones, browsers</h2>
+<p>A true peer network has no servers, only peers that happen to be reachable more or less often. That is exactly what the design already assumes: every writer owns its own log, writes while offline, and catches up later. <b>"Hub" is a property — always on, reachable — not a role.</b> The protocol treats a phone and the mini identically; topology is just who can be reached right now.</p>
+<table>
+<tr><th>kind of node</th><th>examples</th><th>can be pulled from?</th><th>how its log gets out</th></tr>
+<tr><td><b>always on, reachable</b></td><td>the mini</td><td>yes</td><td>others pull it. It ends up relaying for everyone, because it's there</td></tr>
+<tr><td><b>comes and goes, reachable</b></td><td>a laptop with a tunnel, or dialable by key over iroh</td><td>when awake</td><td>pulled when present; its log waits when it isn't</td></tr>
+<tr><td><b>comes and goes, unreachable</b></td><td>a phone, a browser tab, an ESP32 on someone's Wi-Fi, a laptop in a café</td><td><b>no</b> — nothing can connect <i>in</i></td><td>it <b>publishes its own log</b> to any reachable peer, and pulls everything else as usual</td></tr>
+</table>
+<div class="side">
+<div class="card lean"><h3>The one addition: an author may publish its own events <span class="tag lean">D19</span></h3>
+<p>Pull can't reach a phone. So a node may <code>POST</code> its <i>own</i> signed events to a peer. No new route and no new trust:</p>
+<pre>POST /api/event
+<span class="c"># unsigned, from localhost  → this node signs it as its own</span>
+<span class="c"># signed by its author      → verified, stored in the</span>
+<span class="c">#                             author's log, then relayed</span></pre>
+<ul><li><b>Safe because of signatures</b> (already decided): a peer can store an author's events but can't forge or alter them, so it doesn't matter <i>who</i> delivered them.</li>
+<li><b>Same ingest rule as mirrors:</b> only the next <code>seq</code> is accepted; on a gap the peer answers "I have up to N" and the author resends from N+1. Idempotent; safe to retry forever.</li>
+<li><b>Any peer will do.</b> Publish to whichever is reachable; peers pull each other. No primary, nothing to fail over.</li>
+<li>This is nostr's model exactly: clients publish signed events to relays. It's why the laptop stops needing a tunnel at all.</li></ul></div>
+<div class="card"><h3>Why this is the fault-tolerant shape</h3>
+<table><tr><th>failure</th><th>what happens</th></tr>
+<tr><td>phone offline for a day</td><td>keeps writing to its own log; publishes 30 events on reconnect; nobody noticed</td></tr>
+<tr><td>the mini dies</td><td>laptop and phone publish to / pull from each other or any other peer; nothing was "on" the mini that isn't also elsewhere</td></tr>
+<tr><td>no internet at all</td><td>two devices on the same Wi-Fi still find each other (iroh has local discovery) and sync directly</td></tr>
+<tr><td>a peer lies</td><td>it can withhold, never forge; another peer has the real log</td></tr>
+<tr><td>a device is lost</td><td>its key comes off the member list; its log stays, signed, as history</td></tr></table></div>
+</div>
+<h3>The phone, concretely</h3>
+<div class="side">
+<div class="card lean"><h3>A · An installable web app <span class="tag lean">lean</span></h3>
+<ul class="pros"><li>Nothing from an app store; add to home screen</li><li><b>The key lives nowhere</b>: derived from a passkey with Face ID (WebAuthn PRF). This is where that idea fits best</li><li>Own log in the browser's storage; pull and publish over plain HTTPS; works offline</li><li>Web Push for an <code>ask</code> addressed to you (decision Y2), which iOS allows for installed web apps</li><li>Files over iroh in the browser: relayed, still end-to-end encrypted</li><li>It <i>is</i> the dashboard that writes, and it's the <b>second implementation</b> of the protocol, in TypeScript — the proof that this is a protocol</li></ul>
+<ul class="cons"><li>Can't listen, so it's always the "publishes its own log" kind</li><li>Syncs when open or woken by a push, not continuously</li></ul></div>
+<div class="card"><h3>B · A native app around the Rust core</h3>
+<ul class="pros"><li>Direct iroh connections: fast file transfer, local discovery without internet</li><li>The same code as every other node</li></ul>
+<ul class="cons"><li>An app to build, sign and ship</li><li>iOS suspends background apps: it still can't be an always-on peer</li><li>Worth it when phone-to-phone transfers or streaming matter; not before</li></ul></div>
+</div>
+<p class="dim">Laptops get simpler too: with publish-your-own, mac2024 and mac2019 no longer need their <code>kapwa-&lt;box&gt;</code> routes to take part. Only always-on nodes need to be reachable.</p>
+
+<h2 id="protocol">What makes it a protocol, not an app</h2>
+<div class="grid g2">
+<div class="card"><h3>The spec is small and frozen at the bottom</h3><p>Nostr: NIP-01 is the protocol, everything else is optional. Ours: the <a href="#card">index card</a> is KIP-01; verbs, signatures, collectives, the kita pointer are KIP-02…05. A conforming implementation needs only KIP-01.</p></div>
+<div class="card"><h3>Bytes are defined, not objects</h3><p>A line is its UTF-8 bytes. Ids and signatures are over those bytes. Implementations store and forward lines verbatim. For signed events we take nostr's NIP-01 id and signature rather than invent one: its canonical form is narrow enough that many stacks already agree on it (<a href="identity.html#nostr">details</a>).</p></div>
+<div class="card lean"><h3>Test vectors are the contract <span class="tag lean">the important one</span></h3><p>A directory of JSON files any implementation runs:</p>
+<pre>vectors/
+  fold/     events in → board out
+            <span class="c">contested claim · unknown kind · orphan note</span>
+  ingest/   lines in → what gets stored
+            <span class="c">gap · replay · foreign writer · torn line</span>
+  sig/      line + key + sig → valid?
+            <span class="c">tampered byte · wrong key · expired cert</span>
+  cert/     chain → trusted?
+            <span class="c">revoked · expired · unknown root</span></pre>
+<p>Scuttlebutt had one implementation and no vectors; "the protocol" was whatever that code did. Vectors are what make the Rust node a <i>reference</i> rather than <i>the definition</i>.</p></div>
+<div class="card"><h3>Unknown is kept, and ignored</h3><p>Old nodes relay what new nodes write. No version negotiation, ever. Already true for both: kita's open vocabulary, kapwa's open kinds.</p></div>
+</div>
+
+
+<h2>Different stacks for different places</h2>
+<table>
+<tr><th>where</th><th>stack</th><th>implements</th><th>size</th></tr>
+<tr><td>Macs, minis, Linux</td><td>Rust — the reference <code>kapwa</code> binary</td><td>everything</td><td>~5 MB static</td></tr>
+<tr><td>any shell, any agent harness</td><td>POSIX sh + <code>curl</code></td><td>KIP-01 client: say / take / drop / done / board</td><td>~40 lines</td></tr>
+<tr><td>a browser</td><td>TypeScript</td><td>client + WebAuthn (PRF / OIDC-bound keys) + verify</td><td>small, no server</td></tr>
+<tr><td>ESP32 / Pico</td><td>C or MicroPython</td><td>minimal peer: own log, sign lines, serve <code>/api/log/me?since=</code></td><td>~150 lines</td></tr>
+<tr><td>Raspberry Pi</td><td>the Rust binary, cross-compiled</td><td>everything</td><td>—</td></tr>
+<tr><td>inside an application (everyday-vet-admin)</td><td>whatever the app is</td><td>the kita ↔ kapwa bridge: three seams</td><td>small</td></tr>
+</table>
+<p>And the same for kita: two things, five operations, the landing checks, the act line. <code>docs/kernel.md</code> is already nearly a spec, and its "what gets refused" examples are nearly vectors. A TypeScript kernel for an offline browser app, or a read-only fold on a device, becomes a port against vectors rather than a rewrite against prose.</p>
+
+
+<h2 id="easy">What keeps it easy</h2>
+<div class="grid g3">
+<div class="card"><h3>View source</h3><p>The log is a text file: <code>tail -f ~/.kapwa/log/mini.jsonl</code>. The board is plain text. You can debug the whole system with <code>cat</code>, <code>grep</code>, <code>curl</code>.</p></div>
+<div class="card"><h3>No build step</h3><p>No SDK, no schema registry, no OAuth dance, no registration. A key in a file. A second implementation is an afternoon — that's the bar Nostr set and Scuttlebutt missed.</p></div>
+<div class="card"><h3>Forgiving</h3><p>Extra fields are kept. Unknown kinds pass through. Old nodes relay what new nodes write. Nothing ever needs a version negotiation.</p></div>
+<div class="card"><h3>One name</h3><p>One binary, <code>kapwa</code>: <code>kapwa serve</code> is the node, everything else is the client. Not <code>kapwa</code> + a CLI + an MCP server.</p></div>
+<div class="card"><h3>Copy-pasteable</h3><p>The index card is what <code>kapwa --help</code> prints first and what <code>GET /</code> returns to a curl. An agent that lands cold learns it in 120 tokens.</p></div>
+<div class="card"><h3>Progressive</h3><p>Layer 2 exists for whoever needs it. Nobody is made to learn it, and no client breaks for not knowing it.</p></div>
+</div>
+
+
+<div class="q"><b>Honest limits today.</b> The fold re-reads every event on every write — fine at this scale, incremental folding when it isn't. Claims are eventually consistent (above). Keys are a file per node; minting as events is queued. Reads are not yet product-scoped.</div>
+
+</main>
+<footer>served from mac2024 · source in <code>Dorky-Robot/kapwa/ideas/</code></footer>
+</body></html>

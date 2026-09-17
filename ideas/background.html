@@ -1,0 +1,223 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>kapwa · background</title><link rel="stylesheet" href="style.css"><style>.loop text{font:12px ui-monospace,Menlo,monospace}.verb{display:inline-block;font:600 .85rem ui-monospace,Menlo,monospace;padding:.15rem .5rem;border-radius:6px;background:#f3f0fb;border:1px solid #d9cff3;margin:.15rem .2rem .15rem 0}.verb.h{background:#fff3e0;border-color:#f1d3a0}.verb.new{background:#e8f6ee;border-color:#b6dfc5}.sys td:first-child{white-space:nowrap;font-weight:600}.quote{font-size:1.1rem;line-height:1.5;border-left:3px solid var(--accent);padding:.4rem 0 .4rem 1rem;margin:1rem 0;max-width:52rem}</style></head><body>
+<header><div class="wrap"><span class="brand">kapwa <small>ideas &amp; options</small></span>
+<nav><a href="index.html">overview</a><a href="protocol.html">protocol</a><a href="collectives.html">collectives &amp; kita</a><a href="identity.html">identity</a><a href="bytes.html">moving bytes</a><a href="using.html">using it</a><a href="decisions.html">decisions</a><a class="on" href="background.html">background</a></nav></div></header>
+<main>
+<h1>Background</h1>
+<p class="lede">The reasoning the other pages stand on: what kind of thing this is, what MCP and Scuttlebutt teach about staying small, which real-world coordination systems already solved parts of it, and the prior art among agent tools.</p>
+<p class="dim"><a href="#mental-model">mental model</a> · <a href="#mcp">MCP</a> · <a href="#ssb">Scuttlebutt → nostr</a> · <a href="#systems">real-world systems</a> · <a href="#ten">the ten verbs</a> · <a href="#metaphor">metaphors</a> · <a href="#prior-art">prior art</a></p>
+
+<h2 id="mental-model">The mental model: a ledger of commitments</h2>
+<p>Not a task tracker and not a chat. The best theory for this is Winograd &amp; Flores's <i>conversation for action</i>: all coordination is a loop of four speech acts, and work goes wrong when a loop is left open at one of its joints.</p>
+<figure>
+<svg class="loop" viewBox="0 0 760 250" role="img" aria-label="conversation for action loop">
+  <defs><marker id="al" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7a4bd6"/></marker></defs>
+  <g><rect x="30" y="60" width="150" height="64" rx="10" fill="#f3f0fb" stroke="#7a4bd6"/><text x="105" y="88" text-anchor="middle" font-weight="600">request</text><text class="svgd" x="105" y="108" text-anchor="middle">"I need X"</text></g>
+  <g><rect x="215" y="60" width="150" height="64" rx="10" fill="#f3f0fb" stroke="#7a4bd6"/><text x="290" y="88" text-anchor="middle" font-weight="600">promise</text><text class="svgd" x="290" y="108" text-anchor="middle">"I'll do it"</text></g>
+  <g><rect x="400" y="60" width="150" height="64" rx="10" fill="#f3f0fb" stroke="#7a4bd6"/><text x="475" y="88" text-anchor="middle" font-weight="600">declare done</text><text class="svgd" x="475" y="108" text-anchor="middle">"it's done"</text></g>
+  <g><rect x="585" y="60" width="150" height="64" rx="10" fill="#e8f6ee" stroke="#2a7"/><text x="660" y="88" text-anchor="middle" font-weight="600">accept</text><text class="svgd" x="660" y="108" text-anchor="middle">"yes, that's what I needed"</text></g>
+  <path d="M180,92 L215,92" stroke="#7a4bd6" stroke-width="1.6" marker-end="url(#al)"/><path d="M365,92 L400,92" stroke="#7a4bd6" stroke-width="1.6" marker-end="url(#al)"/><path d="M550,92 L585,92" stroke="#7a4bd6" stroke-width="1.6" marker-end="url(#al)"/>
+  <text class="svgd" x="105" y="146" text-anchor="middle">kapwa today: create</text><text class="svgd" x="290" y="146" text-anchor="middle">claim</text><text class="svgd" x="475" y="146" text-anchor="middle">resolve</text><text class="svgd" x="660" y="146" text-anchor="middle" style="fill:#c33">— missing —</text>
+  <text class="svgd" x="30" y="185">where loops break:</text>
+  <text class="svgd" x="30" y="205">a request nobody promised  ·  a promise nobody is performing  ·  a "done" nobody accepted  ·  a question nobody answered</text>
+  <text class="svgd" x="30" y="232" style="fill:#1d1f21">The board's whole job is to show the open loops — and, to each reader, the ones that involve them.</text>
+</svg>
+<figcaption>Our event kinds are already speech acts. What's missing is the last joint (acceptance by the requester) and an addressee on the first (a request <i>to</i> someone).</figcaption>
+</figure>
+<div class="quote">kapwa is a shared, append-only record of who has promised what to whom. Coordination happens by leaving marks, not by sending messages. Every mark is a speech act by a named party. Humans and agents use the same verbs; they differ in authority, not in kind.</div>
+<p>"Leaving marks" is <b>stigmergy</b> — how ants and Wikipedia coordinate. Nobody needs to know anybody: you read the environment, act, and leave a trace. It's the real answer to board-vs-bus, and it's why pull replication fits.</p>
+
+
+<h2 id="mcp">What happened to MCP</h2>
+<div class="grid g3">
+<div class="card"><h3>Context cost</h3><p>Reported figures: a typical MCP operation costs <b>32k–82k tokens</b> because the server's whole schema lands in the context window; the equivalent CLI call is around <b>200</b>.</p></div>
+<div class="card"><h3>Ceremony</h3><p>Three transports in eighteen months, an OAuth story bolted on late, servers that mirrored whole REST APIs. "He built a CLI replacement in 30 minutes" was the tell.</p></div>
+<div class="card"><h3>What won instead</h3><p>A CLI and a markdown file. Agents already know how to run <code>tool --help</code> and read text. The pragmatic frame now: CLI for the inner loop, MCP only where you need multi-user plumbing.</p></div>
+</div>
+<p class="dim">So MCP moves from "next" to "maybe, as a wrapper, if someone asks." The CLI and <code>curl</code> are the interface.</p>
+
+
+<details><summary>Seven lessons from MCP and connectors</summary>
+
+<div class="grid g2">
+<div class="card"><h3>1 · Standardize description, not behavior</h3><p>MCP won because tools describe themselves in natural language and the model reads that at runtime. The board's rules belong in the text the agent sees, not in docs it never opens.</p></div>
+<div class="card"><h3>2 · The smallest primitive wins</h3><p>MCP shipped tools, resources and prompts; the world adopted tools. Every new <code>kind</code> is one more thing every harness must learn. Stay under ten verbs.</p></div>
+<div class="card"><h3>3 · Context is the scarce resource</h3><p>The backlash against connectors is tool-flooding; the fix was progressive disclosure (deferred tools, skills loaded on demand). <code>prime</code> gets a token budget; everything else is on request.</p></div>
+<div class="card"><h3>4 · Outcome verbs beat CRUD mirrors</h3><p>Servers that expose a REST API one-to-one work badly. <code>claim</code> and <code>hand off</code> work; <code>PATCH /items/:id</code> doesn't.</p></div>
+<div class="card"><h3>5 · Identity can't be bolted on</h3><p>MCP added OAuth late and it still hurts adoption. We have key = name from day one. Keep it that simple.</p></div>
+<div class="card" style="border-color:#c33"><h3>6 · Descriptions are an injection surface — so is our board</h3><p>A note written by agent A is read by agent B. That is a prompt-injection channel between agents, including ones owned by external users. Board content must be framed as <b>data, never instructions</b>, and <code>by</code> is what lets a reader weigh it. The most important thing we haven't designed for.</p></div>
+<div class="card"><h3>7 · Transports churn; dumb wires survive</h3><p>stdio → SSE → streamable HTTP in eighteen months. JSON lines over HTTP will outlive all of them.</p></div>
+</div>
+
+
+</details>
+<h2 id="ssb">Scuttlebutt → Nostr: the same idea, with the hard parts removed</h2>
+<table>
+<tr><th></th><th>Scuttlebutt</th><th>Nostr</th><th>kapwa today</th></tr>
+<tr><td>unit</td><td>a per-identity append-only feed; each message links to the previous one's hash</td><td>one independent signed event</td><td>per-writer append-only log with <code>seq</code> (SSB-shaped)</td></tr>
+<tr><td>identity</td><td>ed25519 key, one per device — multi-device never worked</td><td>a keypair; that's the whole account</td><td>bearer key per agent; <code>writer</code> (device) and <code>by</code> (actor) are separate — SSB's bug already avoided</td></tr>
+<tr><td>servers</td><td>peers gossip; "pubs" are always-on peers</td><td>dumb relays: store, filter, forward</td><td>nodes pull each other; mini is the pub</td></tr>
+<tr><td>wire</td><td>secret-handshake + muxrpc + pull-streams</td><td>three JSON messages over a websocket</td><td>two HTTP GETs and a POST</td></tr>
+<tr><td>extensibility</td><td>message <code>type</code> strings</td><td>numeric <code>kind</code> + free-form <code>tags</code>; everything else is an optional NIP</td><td>open <code>kind</code>; unknown kinds/fields kept and ignored</td></tr>
+<tr><td>what hurt</td><td>must download whole feeds (gigabytes); signatures over V8's exact JSON formatting; custom RPC and DB made a second implementation nearly impossible</td><td>no completeness: you can't know you have everything</td><td>—</td></tr>
+<tr><td>what it got right</td><td>offline-first; completeness per feed ("I have alice@412")</td><td><b>a client in an afternoon</b>; NIP-01 is the whole protocol</td><td>—</td></tr>
+</table>
+<div class="q"><b>Reading.</b> We are already Scuttlebutt's good half (per-writer log, <code>seq</code>, completeness, offline) on Nostr's wire (plain JSON, plain HTTP). The job is to not grow Scuttlebutt's bad half: a protocol so particular that only one implementation can exist.</div>
+
+
+<h2 id="systems">Real-world coordination systems</h2>
+<p class="dim">Each solved part of this under pressure, with humans, long before agents. One thing to take from each.</p>
+<table class="sys">
+<tr><th>system</th><th>what it is</th><th>take</th></tr>
+<tr><td>Air traffic control</td><td>flight strips handed controller to controller; readback / hearback; fixed phraseology</td><td class="take">A handoff isn't done until the receiver says "radar contact." <b>Closed loop</b>: every directed act gets an acknowledgment. A tiny fixed vocabulary.</td></tr>
+<tr><td>Hospital handoff<br><span class="dim">SBAR · I-PASS</span></td><td>structured shift-change format; measurably cuts errors</td><td class="take">A handoff has required fields: situation, what's done, what's next, watch-outs. I-PASS ends with the <i>receiver</i> saying it back.</td></tr>
+<tr><td>Incident Command System</td><td>how fire/EMS scale from 2 people to 2,000 with one structure</td><td class="take"><b>One owner per thing</b>. Span of control 3–7. Common terminology. Transfer of command requires a briefing. The escalation path is explicit.</td></tr>
+<tr><td>Mission command</td><td>"commander's intent": give purpose and end state, not steps</td><td class="take">Work carries its <b>why</b> and <b>done-when</b>, so an agent that can't reach anyone — an offline node — can still decide well.</td></tr>
+<tr><td>Toyota<br><span class="dim">andon · kanban</span></td><td>anyone can stop the line; work is pulled by capacity</td><td class="take">Raising an <code>ask</code> is the cheapest, loudest act on the board. Pull, not push. <b>WIP limits</b>: cap claims per agent.</td></tr>
+<tr><td>Kitchen brigade<br><span class="dim">the pass</span></td><td>tickets on a rail, expo calls, "heard!"</td><td class="take">One visible rail. Ack culture. "86 the halibut": a broadcast that a resource is gone.</td></tr>
+<tr><td>Ship's log<br><span class="dim">watch relief</span></td><td>append-only, signed by the officer of the watch</td><td class="take">"I have the watch" / "I stand relieved": ownership moves by a <b>two-sided</b> ritual, recorded. That is literally our log.</td></tr>
+<tr><td>Stigmergy</td><td>ants, termites, Wikipedia</td><td class="take">Marks <b>evaporate</b>. Claims and presence decay without a janitor.</td></tr>
+<tr><td>Court docket</td><td>filings from parties; orders only from the judge</td><td class="take">Human decisions are a distinct, durable record: <b>orders</b>. An <code>ask</code> should end in an answer others can cite.</td></tr>
+<tr><td>Open source<br><span class="dim">issues · PRs</span></td><td>strangers coordinating asynchronously</td><td class="take">External API users are contributors: same verbs, narrower authority, everything leaves a record.</td></tr>
+<tr><td>Contract Net<br><span class="dim">markets</span></td><td>announce → bid → award</td><td class="take dim">Probably overkill. <code>ready</code> + first claim is already a degenerate auction.</td></tr>
+</table>
+
+
+<details><summary>The same event, through four of them</summary>
+
+<div class="grid g2">
+<div class="card"><h3>ATC: handoff with readback</h3><pre>claude  <span class="y">offer</span> sp-7f3k2 → grok-cto
+        situation: EV brand approved, number attached
+        done: campaign filed · next: attach to messaging svc
+        watch: profile is ISV now, not Direct
+grok    <span class="g">accept</span> sp-7f3k2
+<span class="c"># "radar contact": ownership moves now, not before</span></pre></div>
+<div class="card"><h3>Mission command: intent on the item</h3><pre>$ kapwa request "Reclass company profile" --to a2p-ops \
+    --why "Kita SMS can't ship until the company can own a Brand" \
+    --done-when "Twilio shows profile type = ISV"</pre><p class="dim">An agent on an offline node can still tell whether a shortcut serves the purpose.</p></div>
+<div class="card"><h3>Andon + docket: the cord and the order</h3><pre>kapwa   <span class="r">escalate</span> sp-8h2z9 "Direct vs ISV — only Felix can pick"
+<span class="c"># top of every prime, top of the dashboard, a push to Felix</span>
+felix   <span class="y">decide</span> sp-8h2z9 "ISV. EV needs its own Brand."
+grok    note sp-7f3k2 "proceeding per decision sp-8h2z9"</pre></div>
+<div class="card"><h3>Stigmergy: marks evaporate</h3><pre>in motion
+  P1 sp-7f3k2  claimed  claude   2h   <span class="g">●</span> beating
+  P0 sp-2m8q1  claimed  codex    9h   <span class="y">○ stale</span> — no heartbeat for 40m
+<span class="c"># stale is a fold rule over session.beat events;</span>
+<span class="c"># no janitor, no Witness agent</span></pre></div>
+</div>
+
+
+</details>
+<h2 id="ten">Layer-2 vocabulary: the ten verbs</h2>
+<p class="dim">Written before "keep it small." These are optional conventions a node may fold or ignore; day one is <a href="protocol.html#verbs">four</a>.</p>
+<p><span class="verb new">request</span><span class="verb">announce</span><span class="verb">claim</span><span class="verb">release</span><span class="verb new">offer</span><span class="verb new">accept</span><span class="verb">note</span><span class="verb">block</span><span class="verb">escalate</span><span class="verb h">decide</span><span class="verb">done</span>
+<span class="dim">&nbsp; green = new · orange = humans only</span></p>
+<table>
+<tr><th>#</th><th>change</th><th>from</th></tr>
+<tr><td>1</td><td><b>Close the loop.</b> <code>done</code> is "declared done"; the requester (or a human) <code>accept</code>s. Closed means accepted, not "the worker said so."</td><td>conversation for action</td></tr>
+<tr><td>2</td><td><b>Requests have an addressee.</b> <code>request --to grok-cto</code>; unaddressed is an announcement anyone may claim.</td><td>ATC, email</td></tr>
+<tr><td>3</td><td><b>Handoff is two-sided and structured.</b> <code>offer</code> with SBAR-shaped fields → <code>accept</code>. Ownership never moves silently. (Today <code>assign</code> overwrites owner.)</td><td>ATC, I-PASS, watch relief</td></tr>
+<tr><td>4</td><td><b>Intent travels with the work.</b> <code>why</code> and <code>done_when</code> on every request.</td><td>mission command</td></tr>
+<tr><td>5</td><td><b>Marks evaporate.</b> Heartbeats; a claim from a silent session goes <code>stale</code> by fold rule.</td><td>stigmergy, Blackboard</td></tr>
+<tr><td>6</td><td><b>Decisions are first-class.</b> <code>decide</code> is an order only humans (or a delegated role) can write; agents cite it.</td><td>court docket, ICS</td></tr>
+<tr><td>7</td><td><b>Acks.</b> Anything directed at someone can be acknowledged; unacked directed items lead <code>prime</code>.</td><td>ATC, the pass</td></tr>
+<tr><td>8</td><td><b>Content is data.</b> <code>prime</code> frames every quoted note as untrusted, attributed text. Deny-list stays. Later: signed events.</td><td>MCP lesson 6</td></tr>
+<tr><td>9</td><td><b>Budget.</b> <code>prime</code> ≤ ~300 tokens: open loops involving <i>you</i>, then the cord-pulls, then a count of the rest.</td><td>MCP lesson 3</td></tr>
+<tr><td>10</td><td><b>WIP limit.</b> An agent holding N claims is told so before it takes another.</td><td>kanban</td></tr>
+</table>
+
+
+<h2 id="metaphor">Which metaphor is it?</h2>
+<p>The metaphor decides the UI and the words. Three candidates; they aren't exclusive, but one should lead.</p>
+<div class="side">
+<div class="card lean"><h3>The ledger of commitments <span class="tag lean">lean</span></h3><p>Rows are open loops between named parties. The view is "what's owed to me, what I owe." Strongest on accountability and on humans + agents as the same kind of participant.</p><pre>you owe (1)     sp-7f3k2  to cto      promised 2h ago
+owed to you (2) sp-9k1p0  from grok   done — <span class="y">accept?</span>
+                sp-8h2z9  from kapwa  <span class="r">needs your decision</span></pre></div>
+<div class="card"><h3>The pass</h3><p>A rail of tickets everyone can see; you call and you hear "heard." The view is one shared strip, ordered by urgency. Strongest on glanceability and ack culture; weakest on who-owes-whom.</p><pre>── the rail ─────────────────────────
+<span class="r">FIRE</span>  sp-8h2z9  Direct vs ISV?        felix
+P0    sp-2m8q1  A2P owner             — open
+P1    sp-7f3k2  Kita SMS ↔ A2P        claude <span class="g">heard</span></pre></div>
+<div class="card"><h3>The watch log</h3><p>Who has the watch for what, and the log of reliefs. The view is by area of responsibility. Strongest on ownership and handover; weakest on one-off requests.</p><pre>a2p        a2p-ops has the watch   since Sep 10
+kita       lead-kita               since Sep 02
+portfolio  cto                     <span class="y">relief offered → grok</span></pre></div>
+</div>
+
+
+<h2 id="prior-art">Prior art among agent tools</h2>
+<h3>Comparison</h3>
+<table>
+<tr><th></th><th>storage</th><th>writers</th><th>claims</th><th>ids</th><th>agent entry point</th><th>humans</th></tr>
+<tr><td><b>kapwa</b> (today)</td><td>per-writer JSONL, pull-replicated</td><td>one per node, no coordination</td><td>eventual; earliest <code>at</code> wins</td><td>slugs</td><td>HTTP + key; CLI next</td><td>read-only web behind Pocket ID</td></tr>
+<tr><td><b>Beads</b></td><td>Dolt DB, git-remote sync; JSONL export</td><td>many, cell-level merge</td><td>atomic <code>--claim</code></td><td>hash <code>bd-a1b2</code>, hierarchical</td><td><code>bd prime</code>, <code>bd setup claude</code> installs hooks</td><td>audit the ledger</td></tr>
+<tr><td><b>Gas Town</b></td><td>Beads</td><td>polecats (workers) + mayor</td><td>mayor assigns</td><td>prefix + 5 chars (<code>gt-abc12</code>)</td><td>role prompts, formulas</td><td>"wanted board", stamps</td></tr>
+<tr><td><b>Blackboard MCP</b></td><td>state.json + event log, one machine</td><td>sessions</td><td>file claims: CONFLICT / CLAIMED / OWN; heartbeat; stale @30 min</td><td>—</td><td>MCP tools; registered from SessionStart hook</td><td>tkinter dashboard</td></tr>
+<tr><td><b>A2A</b></td><td>—</td><td>—</td><td>—</td><td>—</td><td><code>/.well-known/agent-card.json</code></td><td>—</td></tr>
+</table>
+
+
+<h3>Systems</h3>
+<div class="grid g2">
+
+<div class="card"><h3>Beads (<code>bd</code>) <span class="tag steal">steal: prime · setup · ready · hash ids · messages</span></h3>
+<p>Steve Yegge's issue tracker for coding agents. The moves that matter for us:</p>
+<pre>$ bd prime                  <span class="c"># workflow context + memories, for injection</span>
+$ bd setup claude           <span class="c"># installs hooks + AGENTS.md snippet</span>
+$ bd ready --json           <span class="c"># unblocked work, machine-readable</span>
+$ bd update bd-a1b2 --claim <span class="c"># atomic assignee + in_progress</span>
+$ bd close bd-a1b2 "done"</pre>
+<ul><li><b>Hash IDs</b> so many writers create without colliding — their words: "prevent merge collisions in multi-agent/multi-branch workflows."</li><li>A <b>message</b> issue type with <code>--thread</code> and <code>replies-to</code>: mail in the same ledger as work.</li><li>JSON-first output everywhere.</li></ul>
+<p class="dim">Different from us: one database (Dolt) so claims are atomic; ours is many logs so they are not. See <a href="decisions.html#defaults">D5 in decisions</a>.</p></div>
+
+<div class="card"><h3>Gas Town <span class="tag steal">steal: the Witness</span> <span class="tag skip">skip: the hierarchy</span></h3>
+<p>Roles on top of Beads: <b>Mayor</b> distributes, <b>Polecats</b> work (persistent identity, ephemeral sessions), <b>Witness</b> patrols for stuck/dead workers, <b>Refinery</b> serializes merges. Humans post to a "wanted board" and stamp completed work.</p>
+<p>The reusable idea is the Witness: <i>somebody's job is noticing stale claims</i>. For us that can be a fold rule over session heartbeats rather than an agent. The org chart itself is the pattern paddo.dev argues against ("operational roles over a durable ledger" works; "simulating an org chart" doesn't).</p></div>
+
+<div class="card"><h3>Blackboard MCP <span class="tag steal">steal: register/heartbeat/stale · claim verdicts</span> <span class="tag skip">skip: file &amp; build locks</span></h3>
+<p>Cross-session coordination for Claude Code on one machine.</p>
+<pre>bb_register()      <span class="c"># from a SessionStart hook</span>
+bb_heartbeat()     <span class="c"># stale after 30 min without one</span>
+bb_claim_file()    <span class="c"># → CONFLICT | CLAIMED | OWN</span>
+bb_share_knowledge()  <span class="c"># confidence decays, 30-day half-life</span></pre>
+<ul><li>The claim verb answers with a <b>verdict</b>, not a boolean. Worth copying in the CLI.</li><li>Sessions are first-class and expire. Worth copying as events.</li><li>File/build locks are a worktree problem; knowledge-with-decay is diwa's job, not kapwa's.</li></ul></div>
+
+<div class="card"><h3>A2A agent cards <span class="tag steal">steal: the well-known card</span></h3>
+<p>Discovery is a JSON document at <code>/.well-known/agent-card.json</code> (RFC 8615): name, url, auth schemes, capabilities, skills. Boring in the good way. Ours:</p>
+<pre>GET /.well-known/kapwa.json
+{ "name":"kapwa", "writer":"mini", "version":1,
+  "url":"https://kapwa-mini.felixflor.es",
+  "auth":["bearer"], "routes":["/api/writers","/api/log/{writer}",…],
+  "peers":["https://kapwa-mac2024.felixflor.es",…] }</pre>
+<p class="dim">A new node bootstraps from any one URL and learns the rest from <code>peers</code>.</p></div>
+
+<div class="card"><h3>CLIs for agents (Arcjet, Garbas, gh) <span class="tag steal">steal: all of it</span></h3>
+<ul><li>Non-TTY → structured output; <code>--json</code> always; treat the JSON as a frozen contract.</li><li>Exit codes: 0 ok · 1 error · 2 usage · 3 auth. Never exit 0 on failure.</li><li>Data on stdout, chatter on stderr.</li><li><code>--help</code> with <b>real examples</b>: "Claude Code literally runs <code>yourtool --help</code> before trying to use it."</li><li>A <code>skills</code> command that prints the integration guide.</li><li>Token from env (<code>KAPWA_KEY</code>); <code>CLAUDECODE=1</code> is present in the agent's env.</li><li>Wrap the CLI in MCP later; don't build a second implementation.</li></ul></div>
+
+<div class="card"><h3>Claude Code hooks <span class="tag steal">steal: SessionStart on compact</span></h3>
+<p><code>SessionStart</code> fires on <code>startup | resume | clear | compact | fork</code> and honors <code>additionalContext</code>. <b>compact</b> is the one people miss: re-inject the board after compaction and it survives long sessions. <code>UserPromptSubmit</code> can prepend per turn; <code>Stop</code> receives <code>last_assistant_message</code>.</p>
+<pre>{
+  "hooks": {
+    "SessionStart": [{
+      "matcher": "startup|resume|compact",
+      "hooks": [{
+        "type": "command",
+        "command": "kapwa prime --hook"
+      }]
+    }]
+  }
+}</pre></div>
+
+</div>
+
+
+<h3>What kapwa keeps that they don't have</h3>
+<div class="grid g3">
+<div class="card"><h3>No database</h3><p>Beads needs Dolt; Blackboard needs one machine. Ours is files and HTTP, which is why an ESP32 can be a peer.</p></div>
+<div class="card"><h3>No central writer</h3><p>Every node writes while offline and syncs later. The price is eventual claims; the payoff is that the laptop in a coffee shop still works.</p></div>
+<div class="card"><h3>Identity from the network</h3><p>People come through Pocket ID; agents through keys; nodes through a shared token. None of the others separate the three.</p></div>
+</div>
+
+
+<p class="dim">Sources: <a href="https://github.com/gastownhall/beads">Beads</a> · <a href="https://yegge.ai/gastown">Gas Town</a> · <a href="https://paddo.dev/blog/gastown-two-kinds-of-multi-agent/">Two kinds of multi-agent</a> · <a href="https://glama.ai/mcp/servers/RD2100/blackboard-mcp">Blackboard MCP</a> · <a href="https://a2a-protocol.org/latest/topics/agent-discovery/">A2A discovery</a> · <a href="https://blog.arcjet.com/designing-a-cli-for-ai-agents/">Arcjet: a CLI for AI agents</a> · <a href="https://garbas.si/posts/ai-agents-are-your-new-users-cli/">Garbas: agents are your new users</a> · <a href="https://code.claude.com/docs/en/hooks">Claude Code hooks</a> · <a href="https://github.com/nostr-protocol/nips/blob/master/01.md">NIP-01</a> · <a href="https://www.nos.social/blog/pivoting-protocols">From SSB to Nostr</a> · <a href="https://milvus.io/blog/is-mcp-dead-cli-and-skills-for-ai-agents.md">Is MCP dead? (Milvus)</a> · <a href="https://www.firecrawl.dev/blog/mcp-vs-cli">MCP vs CLI (Firecrawl)</a> · <a href="https://onelayerdeeper.substack.com/p/fyi-mcp-is-winning-and-skills-are">counterpoint: MCP is winning</a></p>
+</main>
+<footer>served from mac2024 · source in <code>Dorky-Robot/kapwa/ideas/</code></footer>
+</body></html>
