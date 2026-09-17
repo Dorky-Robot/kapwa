@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 
-use crate::board::{base, Item};
-use crate::render::{ago, feed, LIVE_JS};
+use crate::board::base;
+use crate::render::{ago, LIVE_JS};
 use crate::App;
 
 /// Someone who has done something here. Derived: nobody announces itself.
@@ -192,7 +192,7 @@ fn shell(title: &str, which: &str, body: Markup) -> Markup {
                 header {
                     span class="brand" { "kapwa" }
                     nav {
-                        a href="/try/" class=[(which == "index").then_some("on")] { "sandbox" }
+                        a href="/try/" class=[(which == "d").then_some("on")] { "dashboard" }
                         a href="/try/constellation" class=[(which == "c").then_some("on")] { "constellation" }
                         a href="/try/rail" class=[(which == "r").then_some("on")] { "rail" }
                         a href="/" { "the board" }
@@ -206,41 +206,13 @@ fn shell(title: &str, which: &str, body: Markup) -> Markup {
     }
 }
 
-pub fn index(app: &App) -> Markup {
-    let p = parties(app);
-    let e = edges(app);
-    shell(
-        "sandbox",
-        "index",
-        html! {
-            div class="wrap prose" {
-                h1 { "Two ways of seeing who is talking to whom" }
-                p { "Both are live and both draw the same fold — " (p.len()) " participants, " (e.len()) " directed pairs. Pick one and it moves to the board; the other goes away." }
-                div class="cards" {
-                    a class="pick" href="/try/constellation" {
-                        h2 { "Constellation" }
-                        p { "Everyone on a ring, an arc for every pair who have dealt with each other, thicker the more often and brighter the more recently. Answers " em { "who works with whom" } " at a glance, and shows a participant nobody talks to." }
-                        p class="dim" { "Weakest at: what any one thing is about." }
-                    }
-                    a class="pick" href="/try/rail" {
-                        h2 { "Rail" }
-                        p { "One lane per participant and a single stream of acts down the middle, each drawn from its author's lane to whoever it landed on. Answers " em { "what is happening right now, and between whom" } "." }
-                        p class="dim" { "Weakest at: the shape of the whole, once there are many participants." }
-                    }
-                }
-                p class="dim" { "Neither writes anything. Chronology and the numbers belong to " code { "kapwa day" } " and " code { "kapwa stats" } ", which another session is building." }
-            }
-        },
-    )
-}
-
 /// Everyone on a ring; an arc for every pair that has dealt with each other.
-pub fn constellation(app: &App) -> Markup {
+fn ring(app: &App) -> Markup {
     let parties = parties(app);
     let edges = edges(app);
     let n = parties.len().max(1);
-    let (w, h) = (760.0_f64, 520.0_f64);
-    let (cx, cy, r) = (w / 2.0, h / 2.0 - 10.0, (h / 2.0 - 90.0).max(120.0));
+    let (w, h) = (700.0_f64, 520.0_f64);
+    let (cx, cy, r) = (w / 2.0, h / 2.0 - 6.0, (h / 2.0 - 96.0).max(110.0));
     let at = |i: usize| {
         let a = (i as f64 / n as f64) * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
         (cx + r * a.cos(), cy + r * a.sin())
@@ -251,7 +223,140 @@ pub fn constellation(app: &App) -> Markup {
         .map(|(i, p)| (p.name.as_str(), i))
         .collect();
     let newest = edges.first().map(|e| e.last.clone()).unwrap_or_default();
+    html! {
+        svg viewBox={ "0 0 " (w) " " (h) } class="cons" {
+            @for e in &edges {
+                @if let (Some(&a), Some(&b)) = (idx.get(e.from.as_str()), idx.get(e.to.as_str())) {
+                    @let (x1, y1) = at(a);
+                    @let (x2, y2) = at(b);
+                    @let qx = cx + ((x1 + x2) / 2.0 - cx) * 0.35;
+                    @let qy = cy + ((y1 + y2) / 2.0 - cy) * 0.35;
+                    path
+                        d={ "M" (x1) "," (y1) " Q" (qx) "," (qy) " " (x2) "," (y2) }
+                        class=[(e.last == newest).then_some("hot")]
+                        style={ "stroke:hsl(" (hue(&e.from)) " 70% 55%);stroke-width:" (1.0 + (e.n as f64).min(6.0)) ";opacity:" (0.25 + 0.6 / (1.0 + fade(&e.last))) }
+                        { title { (e.from) " " (e.kind) " " (e.to) " · " (e.n) "× · " (ago(&e.last)) " ago" } }
+                }
+            }
+            @for (i, p) in parties.iter().enumerate() {
+                @let (x, y) = at(i);
+                g class="node" {
+                    circle cx=(x) cy=(y) r=(7.0 + (p.said as f64).min(9.0)) style={ "fill:hsl(" (hue(&p.name)) " 70% 55%)" } {
+                        title { (p.name) " · " (p.said) " acts · last " (ago(&p.last)) " ago" }
+                    }
+                    @if p.holds > 0 { circle cx=(x) cy=(y) r=(13.0 + (p.said as f64).min(9.0)) class="ring" {} }
+                    text x=(x) y=(y + 28.0) text-anchor="middle" class="lbl" { (p.name) }
+                }
+            }
+            @if parties.is_empty() {
+                text x=(cx) y=(cy) text-anchor="middle" class="lbl" { "nobody has spoken yet" }
+            }
+        }
+        div class="legend dim" { "thickness = how often · brightness = how recently · a ring = holds something now" }
+    }
+}
 
+/// Who is about, as lanes: derived from the log, so nobody announces itself.
+fn lanes(app: &App) -> Markup {
+    let parties = parties(app);
+    html! {
+        div class="phead" { "who is about" span class="dim" { (parties.len()) } }
+        @for p in &parties {
+            div class="lane" style={ "border-left-color:hsl(" (hue(&p.name)) " 70% 55%)" } {
+                div class="lname" { (dot(&p.name)) (p.name) }
+                div class="lmeta dim" {
+                    (ago(&p.last)) " ago · " (p.said) " acts"
+                    @if p.holds > 0 { " · holds " (p.holds) }
+                    @if p.asked_of > 0 { span class="wait" { " · waiting on them " (p.asked_of) } }
+                }
+                @if !p.topics.is_empty() {
+                    div class="ltopics dim" { @for t in p.topics.iter().take(4) { span class="t" { "#" (t) } } }
+                }
+            }
+        }
+        @if parties.is_empty() { div class="dim pad" { "nobody yet." } }
+    }
+}
+
+/// The acts, newest first, each with whoever it landed on: the addressee if
+/// it named one, else whoever wrote the item being acted upon. Walks the
+/// histories rather than the text feed, because the feed drops the `to` and
+/// the arrow is the whole point here.
+fn rail_rows(app: &App, n: usize) -> Markup {
+    let st = app.board.read().unwrap();
+    let mut rows: Vec<(String, String, String, String, String, String)> = st
+        .items
+        .values()
+        .flat_map(|i| {
+            i.history.iter().map(move |h| {
+                let to = h.to.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| {
+                    if h.by == i.created_by {
+                        String::new()
+                    } else {
+                        i.created_by.clone()
+                    }
+                });
+                (
+                    h.at.clone(),
+                    h.by.clone(),
+                    h.verb.clone(),
+                    i.id.clone(),
+                    h.text.clone().unwrap_or_else(|| i.title.clone()),
+                    to,
+                )
+            })
+        })
+        .collect();
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    rows.truncate(n);
+    html! {
+        ul class="rail" {
+            @for (at, by, verb, id, text, to) in &rows {
+                li {
+                    span class="when dim" { (ago(at)) }
+                    (dot(by)) span class="who" { (by) }
+                    span class={ "verb v-" (verb) } { (verb) }
+                    @if !to.is_empty() && to != by {
+                        span class="arrow dim" { "→" }
+                        (dot(to)) span class="who" { (to) }
+                    }
+                    span class="id dim" { (id) }
+                    span class="what" { (text) }
+                }
+            }
+            @if rows.is_empty() { li class="dim" { "nothing has happened yet." } }
+        }
+    }
+}
+
+/// Both at once: the shape on the left, the stream on the right, and who is
+/// about down the side. One page, because the question "who is talking to
+/// whom" is answered by the two of them together — the ring says who deals
+/// with whom at all, the rail says what they are saying right now.
+pub fn dashboard(app: &App) -> Markup {
+    let e = edges(app);
+    let p = parties(app);
+    shell(
+        "dashboard",
+        "d",
+        html! {
+            div class="three" {
+                section class="panel lanes" { (lanes(app)) }
+                section class="panel" {
+                    div class="phead" { "who deals with whom" span class="dim" { (p.len()) " people · " (e.len()) " pairs" } }
+                    (ring(app))
+                }
+                section class="panel" {
+                    div class="phead" { "the rail" span class="dim" { "newest first" } }
+                    (rail_rows(app, 24))
+                }
+            }
+        },
+    )
+}
+
+pub fn constellation(app: &App) -> Markup {
+    let edges = edges(app);
     shell(
         "constellation",
         "c",
@@ -259,42 +364,12 @@ pub fn constellation(app: &App) -> Markup {
             div class="split" {
                 section class="panel grow" {
                     div class="phead" { "who deals with whom" span class="dim" { (edges.len()) " pairs" } }
-                    svg viewBox={ "0 0 " (w) " " (h) } class="cons" {
-                        @for e in &edges {
-                            @if let (Some(&a), Some(&b)) = (idx.get(e.from.as_str()), idx.get(e.to.as_str())) {
-                                @let (x1, y1) = at(a);
-                                @let (x2, y2) = at(b);
-                                @let mx = (x1 + x2) / 2.0;
-                                @let my = (y1 + y2) / 2.0;
-                                @let bend = 0.35;
-                                @let qx = cx + (mx - cx) * bend;
-                                @let qy = cy + (my - cy) * bend;
-                                path
-                                    d={ "M" (x1) "," (y1) " Q" (qx) "," (qy) " " (x2) "," (y2) }
-                                    class=[(e.last == newest).then_some("hot")]
-                                    style={ "stroke:hsl(" (hue(&e.from)) " 70% 55%);stroke-width:" (1.0 + (e.n as f64).min(6.0)) ";opacity:" (0.25 + 0.6 / (1.0 + fade(&e.last))) }
-                                    { title { (e.from) " " (e.kind) " " (e.to) " · " (e.n) "× · " (ago(&e.last)) " ago" } }
-                            }
-                        }
-                        @for (i, p) in parties.iter().enumerate() {
-                            @let (x, y) = at(i);
-                            g class="node" {
-                                circle cx=(x) cy=(y) r=(8.0 + (p.said as f64).min(10.0)) style={ "fill:hsl(" (hue(&p.name)) " 70% 55%)" } {
-                                    title { (p.name) " · " (p.said) " acts · last " (ago(&p.last)) " ago" }
-                                }
-                                @if p.holds > 0 { circle cx=(x) cy=(y) r=(14.0 + (p.said as f64).min(10.0)) class="ring" {} }
-                                text x=(x) y=(y + 30.0) text-anchor="middle" class="lbl" { (p.name) }
-                            }
-                        }
-                    }
-                    div class="legend dim" {
-                        "thickness = how often · brightness = how recently · a ring = holds something now"
-                    }
+                    (ring(app))
                 }
                 section class="panel side" {
                     div class="phead" { "lately" }
                     ul class="edges" {
-                        @for e in edges.iter().take(14) {
+                        @for e in edges.iter().take(18) {
                             li {
                                 (dot(&e.from)) span class="who" { (e.from) }
                                 span class="verb" { (e.kind) }
@@ -305,6 +380,22 @@ pub fn constellation(app: &App) -> Markup {
                         @if edges.is_empty() { li class="dim" { "nobody has spoken to anybody yet." } }
                     }
                 }
+            }
+        },
+    )
+}
+
+pub fn rail(app: &App) -> Markup {
+    shell(
+        "rail",
+        "r",
+        html! {
+            div class="split" {
+                section class="panel grow" {
+                    div class="phead" { "the rail" span class="dim" { "newest first" } }
+                    (rail_rows(app, 40))
+                }
+                section class="panel side lanes" { (lanes(app)) }
             }
         },
     )
@@ -321,67 +412,6 @@ fn fade(at: &str) -> f64 {
         .unwrap_or(9.0)
 }
 
-/// One lane per participant, and the acts running down the middle.
-pub fn rail(app: &App) -> Markup {
-    let parties = parties(app);
-    let rows = feed(app, 26);
-    let st = app.board.read().unwrap();
-    let target: BTreeMap<String, (String, String)> = st
-        .items
-        .values()
-        .map(|i: &Item| (i.id.clone(), (i.created_by.clone(), i.asked_of.clone())))
-        .collect();
-
-    shell(
-        "rail",
-        "r",
-        html! {
-            div class="split" {
-                section class="panel lanes" {
-                    div class="phead" { "who is about" span class="dim" { (parties.len()) } }
-                    @for p in &parties {
-                        div class="lane" style={ "border-left-color:hsl(" (hue(&p.name)) " 70% 55%)" } {
-                            div class="lname" { (dot(&p.name)) (p.name) }
-                            div class="lmeta dim" {
-                                (ago(&p.last)) " ago · " (p.said) " acts"
-                                @if p.holds > 0 { " · holds " (p.holds) }
-                                @if p.asked_of > 0 { span class="wait" { " · waiting on them " (p.asked_of) } }
-                            }
-                            @if !p.topics.is_empty() {
-                                div class="ltopics dim" { @for t in p.topics.iter().take(4) { span class="t" { "#" (t) } } }
-                            }
-                        }
-                    }
-                    @if parties.is_empty() { div class="dim" { "nobody yet." } }
-                }
-                section class="panel grow" {
-                    div class="phead" { "the rail" span class="dim" { "newest first" } }
-                    ul class="rail" {
-                        @for (at, by, verb, id, text) in &rows {
-                            @let to = match verb.as_str() {
-                                "ask" => target.get(id).map(|t| t.1.clone()).unwrap_or_default(),
-                                _ => target.get(id).map(|t| t.0.clone()).unwrap_or_default(),
-                            };
-                            li {
-                                span class="when dim" { (ago(at)) }
-                                (dot(by)) span class="who" { (by) }
-                                span class={ "verb v-" (verb) } { (verb) }
-                                @if !to.is_empty() && &to != by {
-                                    span class="arrow dim" { "→" }
-                                    (dot(&to)) span class="who" { (to) }
-                                }
-                                span class="id dim" { (id) }
-                                span class="what" { (text) }
-                            }
-                        }
-                        @if rows.is_empty() { li class="dim" { "nothing has happened yet." } }
-                    }
-                }
-            }
-        },
-    )
-}
-
 const CSS: &str = r#"
 :root{--bg:#0d0f11;--panel:#14171a;--line:#22262b;--ink:#e6e8ea;--dim:#7d858d;--ok:#3ddc97}
 *{box-sizing:border-box}
@@ -392,6 +422,8 @@ nav{display:flex;gap:1rem;flex:1}nav a{color:var(--dim);text-decoration:none}nav
 .live{color:var(--dim);font-size:.8rem}#live.ok::before{content:"● ";color:var(--ok)}
 main{padding:1rem}
 .split{display:grid;grid-template-columns:minmax(0,1fr) 22rem;gap:1rem;align-items:start}
+.three{display:grid;grid-template-columns:15rem minmax(0,1fr) 25rem;gap:1rem;align-items:start}
+.pad{padding:.6rem .9rem}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .phead{display:flex;justify-content:space-between;padding:.6rem .9rem;border-bottom:1px solid var(--line);text-transform:uppercase;letter-spacing:.06em;font-size:.72rem;color:var(--dim)}
 .dim{color:var(--dim)}
@@ -420,5 +452,6 @@ ul{list-style:none;margin:0;padding:0}
 .pick{display:block;padding:1rem;background:var(--panel);border:1px solid var(--line);border-radius:10px;text-decoration:none;color:inherit}
 .pick:hover{border-color:var(--ok)}
 .pick h2{margin:0 0 .5rem;font-size:1rem}.pick p{margin:.4rem 0;font-size:.85rem}
-@media (max-width:880px){.split,.cards{grid-template-columns:1fr}}
+@media (max-width:1180px){.three{grid-template-columns:14rem minmax(0,1fr)}.three section:last-child{grid-column:1/-1}}
+@media (max-width:880px){.split,.cards,.three{grid-template-columns:1fr}}
 "#;

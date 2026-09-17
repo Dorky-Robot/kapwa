@@ -481,7 +481,7 @@ async fn try_page(State(app): State<App>, caller: Caller, which: &'static str) -
         match which {
             "c" => try_ui::constellation(&app),
             "r" => try_ui::rail(&app),
-            _ => try_ui::index(&app),
+            _ => try_ui::dashboard(&app),
         }
         .into_string(),
     )
