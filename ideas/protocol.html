@@ -169,6 +169,36 @@ POST /api/event, bad key:  HTTP 401
 
 
 </details>
+<h2 id="topics">Topics, not channels</h2>
+<p>Right now everything is everything: one board, and every node sees all of it. "Channels" is the obvious fix, and it bundles four different problems into one heavy concept. Pulled apart, each already has a small answer, and none of them is a channel.</p>
+<table>
+<tr><th>what a channel is asked to do</th><th>what does it here</th><th>new concept?</th></tr>
+<tr><td><b>Attention</b>: "I only care about the roof"</td><td>A <b>topic tag</b> on the item, <code>["t","roof"]</code>, and a filter when you read. A saved filter is your "channel" (kita calls it a scope)</td><td>no: tags were always allowed</td></tr>
+<tr><td><b>Audience</b>: "this is for the practice"</td><td><b>Address a participant.</b> A collective is already a participant, so <code>--to everyday-vet</code> reaches everyone in it; a team is a smaller list</td><td>no</td></tr>
+<tr><td><b>Visibility</b>: "others must not see this"</td><td><a href="decisions.html#yours">Decision Y1</a>: a node serves an event only to its author's collective and to those it is addressed to. <b>A topic never grants or denies access</b></td><td>no</td></tr>
+<tr><td><b>A place to talk</b>: "the ops room"</td><td>A <b>long-lived item</b>. Everything said about an item already hangs off it, in order. An item that stays open is a room</td><td>no</td></tr>
+</table>
+<div class="side">
+<div class="card lean"><h3>What it looks like <span class="tag lean">D21</span></h3>
+<pre>$ kapwa say "Roof leaks over the back door" \
+    --t roof --t urgent
+said 2m8q1
+
+$ kapwa --t roof            <span class="c"># the board, filtered</span>
+$ kapwa prime --t roof,fence <span class="c"># an agent that only works those</span>
+
+<span class="c"># a standing place to talk is just an item you never close</span>
+$ kapwa say --as ops "standing: ops chatter"
+$ kapwa say ops "tunnel on the laptop flapped again"</pre>
+<p class="dim">An agent's key can list the topics it cares about, so <code>prime</code> is scoped without anyone typing flags. Default scope, with no topics at all, is already narrow: what's addressed to you, what you hold, what's asked of you.</p></div>
+<div class="card"><h3>Why not real channels</h3><ul>
+<li><b>A channel is a folder.</b> Each message lives in exactly one, and someone has to choose which. kita exists to refuse that: a thing belongs in many places, and "two people never chose the same keywords." An item can carry five topics; it can only sit in one channel.</li>
+<li><b>Channels weld topic to access.</b> A private channel is a subject <i>and</i> a permission in one object, which is why they need membership, invites, admins and archiving. Keep them apart and each stays trivial.</li>
+<li><b>nostr has no channels in its core</b> either: events carry tags, readers subscribe with filters. Group chat exists there only as optional conventions on top.</li>
+<li><b>It would be the first container in kapwa.</b> Everything so far is marks plus folds.</li></ul></div>
+</div>
+<div class="q"><b>The one real limit:</b> topics narrow what you <i>read</i>, not what a node <i>stores</i>. Sync is per-writer and contiguous, which is what makes "I have all of mini's events" provable, so a node can't skip the lines it finds boring. That's fine while logs are kilobytes. A device too small to mirror doesn't sync at all: it asks a node for a filtered board. If logs ever get large, the answer is a writer per area of work, not filtered replication.</div>
+
 <h2 id="riders">Riders: what kapwa carries without knowing</h2>
 <p>kapwa is an envelope and a ledger: who said what to whom, about which item, in what order, signed. It is deliberately ignorant of everything else, <b>including kita</b>. Other protocols ride it the way attachments ride email: SMTP has never known what a PDF is.</p>
 <div class="side">

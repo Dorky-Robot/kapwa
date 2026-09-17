@@ -4,7 +4,7 @@
 <nav><a href="index.html">overview</a><a href="protocol.html">protocol</a><a href="collectives.html">collectives &amp; kita</a><a href="identity.html">identity</a><a href="bytes.html">moving bytes</a><a href="using.html">using it</a><a class="on" href="decisions.html">decisions</a><a href="background.html">background</a></nav></div></header>
 <main>
 <h1>Decisions</h1>
-<p class="lede">Every open question from every page, plus a few nobody had asked yet, in one register. Sorted by who needs to act: five that are genuinely yours, twenty where I have a default and will proceed unless you object, what's already settled, and what's deferred with the trigger that would reopen it.</p>
+<p class="lede">Every open question from every page, plus a few nobody had asked yet, in one register. Sorted by who needs to act: five that are genuinely yours, twenty-one where I have a default and will proceed unless you object, what's already settled, and what's deferred with the trigger that would reopen it.</p>
 <p><span class="tag open">your call</span> <span class="tag lean">default, unless you object</span> <span class="tag done">settled</span> <span class="tag next">deferred</span></p>
 
 <h2 id="yours">Your call <span class="tag open">5</span></h2>
@@ -28,7 +28,7 @@
 <p class="dim"><a href="identity.html">identity</a></p></div>
 </div>
 
-<h2 id="defaults">Defaults I'll proceed on unless you object <span class="tag lean">20</span></h2>
+<h2 id="defaults">Defaults I'll proceed on unless you object <span class="tag lean">21</span></h2>
 <table>
 <tr><th></th><th>question</th><th>default</th></tr>
 <tr><td class="mono">D1</td><td>Item ids: slug, hash, or writer-prefixed?</td><td>An item is its creating event; the CLI takes any unambiguous prefix. Slugs become an optional alias tag.</td></tr>
@@ -51,6 +51,7 @@
 <tr><td class="mono">D18</td><td>Files and streams between people and machines</td><td><b>A separate tool, not part of kapwa</b> (your instinct, 2026-09-17). Bytes and streams move over iroh in their own small Rust binary; the mover doesn't need kapwa at all; when it wants a durable, signed record it <i>says</i> offers and receipts on kapwa like any agent, as an opaque payload (D20). It can also give kapwa a tunnel-free path as a local port. Start with a <code>sendme</code> spike between your own machines (Doug's mini is excluded for now); a self-hosted relay before any client-facing use. <a href="bytes.html">moving bytes</a></td></tr>
 <tr><td class="mono">D20</td><td>Does kapwa know its siblings?</td><td><b>No, not even kita</b> (your question, 2026-09-17). Two generic slots any protocol may use: <code>["ref", uri, word?]</code> and <code>["payload", type, string]</code>. Every event still carries a plain sentence. Riders are ordinary agents, never depend on kapwa, and kapwa's spec never names one. <a href="protocol.html#riders">riders</a></td></tr>
 <tr><td class="mono">D19</td><td>Laptops, phones and browsers as real nodes</td><td>"Gateway" is a property (always on, reachable), not a role. <b>Built:</b> sync is two-way over one outbound connection (<code>POST /api/log/&lt;writer&gt;</code>, same contiguous rule as a pull), so leaves need no address. Trust is the mesh token for now, per-author once events are signed. Still to do: the phone as an installable web app (a TypeScript second implementation, key from a passkey via PRF). <a href="protocol.html#nodes">every device is a node</a></td></tr>
+<tr><td class="mono">D21</td><td>Channels?</td><td><b>Topics, not channels.</b> A topic is a tag (<code>["t","roof"]</code>, many per item) and a channel is a saved filter. Audience is addressing a participant (a collective already is one); visibility is Y1; a place to talk is a long-lived item. The single-valued <code>product</code> field becomes tags. A topic never controls access. <a href="protocol.html#topics">topics, not channels</a></td></tr>
 </table>
 
 <h2 id="settled">Settled <span class="tag done">in your words</span></h2>
