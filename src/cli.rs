@@ -23,6 +23,8 @@ kapwa — what participants owe each other
   kapwa ask <id> \"…\"        someone must answer    [--to who]
   kapwa ask \"…\" --to who    …about something new
 
+  kapwa day                 what happened today, and who did it  [--on <day>] [--t topic]
+  kapwa stats               where the work waited                [--days N] [--t topic]
   kapwa topics              what topics are in use; look before inventing
   kapwa mine                what waits on me, what I hold
   kapwa show <id>           one item and its history
@@ -40,6 +42,8 @@ kapwa — what participants owe each other
   --wait   (take) wait one sync, then answer CLAIMED · LOST to x
   --tag    sign as <name>/<tag>: one session of many (or KAPWA_TAG)
   --me     which of your keys: ~/.config/kapwa/keys/<name> (or KAPWA_ME)
+  --on     (day) today · yesterday · 2026-09-17
+  --days   (stats) how far back to count; a week by default
   --json   force JSON; it is already the default when piped
 
   key      KAPWA_KEY, else ~/.config/kapwa/key
@@ -51,6 +55,7 @@ examples
   kapwa take 7f3 --wait
   kapwa ask 7f3 --to felix \"patch it, or replace the flashing?\"
   kapwa mine --json | jq -r '.asked[].id'
+  kapwa day --on yesterday --t roof
 ";
 
 #[derive(Default)]
@@ -62,6 +67,8 @@ struct Args {
     name: Option<String>,
     tag: Option<String>,
     me: Option<String>,
+    on: Option<String>,
+    days: Option<String>,
     json: bool,
     wait: bool,
     hook: bool,
@@ -79,6 +86,8 @@ fn parse(raw: &[String]) -> Result<Args, String> {
             "--as" => a.name = Some(val("--as")?),
             "--tag" => a.tag = Some(val("--tag")?),
             "--me" => a.me = Some(val("--me")?),
+            "--on" => a.on = Some(val("--on")?),
+            "--days" => a.days = Some(val("--days")?),
             "--json" => a.json = true,
             "--wait" => a.wait = true,
             "--hook" => a.hook = true,
@@ -194,6 +203,19 @@ impl Node {
     }
 }
 
+/// `?a=1&b=2`, skipping what was not given.
+fn query(pairs: &[(&str, Option<String>)]) -> String {
+    let q: Vec<String> = pairs
+        .iter()
+        .filter_map(|(k, v)| v.as_ref().map(|v| format!("{k}={v}")))
+        .collect();
+    if q.is_empty() {
+        String::new()
+    } else {
+        format!("?{}", q.join("&"))
+    }
+}
+
 fn scope(a: &Args) -> String {
     if a.t.is_empty() {
         String::new()
@@ -267,9 +289,9 @@ pub async fn run(raw: Vec<String>) -> i32 {
     };
     // the command is the first bare word, wherever the flags sit; with none,
     // it's the board
-    const COMMANDS: [&str; 14] = [
-        "board", "say", "take", "drop", "done", "ask", "mine", "show", "prime", "topics", "how",
-        "protocol", "whoami", "setup",
+    const COMMANDS: [&str; 16] = [
+        "board", "say", "take", "drop", "done", "ask", "mine", "show", "prime", "day", "stats",
+        "topics", "how", "protocol", "whoami", "setup",
     ];
     let cmd_owned = match a.pos.first() {
         Some(c) if COMMANDS.contains(&c.as_str()) => a.pos.remove(0),
@@ -351,6 +373,25 @@ pub async fn run(raw: Vec<String>) -> i32 {
                 print!("{}", got?);
             }
             ("topics", []) => print!("{}", node.get("/api/topics").await?),
+            // a day can be named where the command wants it, so
+            // `kapwa day yesterday` reads as well as `--on yesterday`
+            ("day", rest) | ("stats", rest) if rest.len() < 2 => {
+                let (key, given) = match cmd {
+                    "day" => ("on", a.on.clone()),
+                    _ => ("days", a.days.clone()),
+                };
+                let q = query(&[
+                    (key, given.or_else(|| rest.first().cloned())),
+                    ("t", (!a.t.is_empty()).then(|| a.t.join(","))),
+                ]);
+                let ext = if as_json { "" } else { ".txt" };
+                let out = node.get(&format!("/api/{cmd}{ext}{q}")).await?;
+                if as_json {
+                    println!("{out}");
+                } else {
+                    print!("{out}");
+                }
+            }
             ("mine", []) => {
                 let out = node.get(&format!("/api/mine{}", scope(&a))).await?;
                 if as_json {

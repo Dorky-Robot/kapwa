@@ -258,7 +258,7 @@ pub fn board(app: &App, topics: &[String]) -> String {
 /// Clip a line so a long thing said does not wrap the whole path away.
 fn clip(s: &str, n: usize) -> String {
     match s.char_indices().nth(n) {
-        Some((i, _)) => format!("{}…", &s[..i].trim_end()),
+        Some((i, _)) => format!("{}…", s[..i].trim_end()),
         None => s.to_string(),
     }
 }
@@ -276,14 +276,19 @@ pub fn step_line(s: &Step) -> String {
         ("opened", _) if !s.topics.is_empty() => format!("  #{}", s.topics.join(" #")),
         _ => String::new(),
     };
+    let run = if s.times > 1 {
+        format!(" ×{}", s.times)
+    } else {
+        String::new()
+    };
     format!(
-        "{:>5}  {:<15} {:<7} {:<8} {}{}",
+        "{:>5}  {:<15} {:<8} {:<12} {}{}",
         s.clock,
         clip(who, 15),
         s.word,
         s.id,
-        clip(&what, 96),
-        tail
+        clip(&what, 88),
+        run + &tail
     )
 }
 
@@ -424,7 +429,7 @@ pub fn prime(app: &App, who: &Who, topics: &[String]) -> String {
     if m.asked.is_empty() && m.held.is_empty() && m.said_to.is_empty() && m.open.is_empty() {
         out.push("\nnothing waits on you, and nothing is open.".into());
     }
-    out.push("\nmore: kapwa · kapwa show <id> · kapwa --help".into());
+    out.push("\nmore: kapwa · kapwa day · kapwa show <id> · kapwa --help".into());
     out.join("\n") + "\n"
 }
 
@@ -509,6 +514,8 @@ THE WIRE
   write  POST /api/event        {{\"kind\":\"take\",\"id\":\"<id or prefix>\"}}
   read   GET  /api/prime.txt?t=a,b    what involves you
          GET  /api/board.txt?t=a,b    everything open
+         GET  /api/day.txt?on=today   what happened, and who did it
+         GET  /api/stats.txt?days=7   where the work waited
          GET  /api/mine · /api/item/<id> · /api/state · /api/whoami
   sync   GET  /api/writers · GET + POST /api/log/<writer>?since=<seq>
          (between nodes, with the mesh token)
@@ -590,6 +597,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
 /// Read-only by construction: no forms, no scripts, refreshes itself.
 pub fn page(app: &App, who: &Who) -> Markup {
     let s = sections(app, &[]);
+    // held apart because `who` is shadowed further down by who is about
+    let me = who.name.clone();
     html! {
         (DOCTYPE)
         html lang="en" {
@@ -648,19 +657,39 @@ pub fn page(app: &App, who: &Who) -> Markup {
                         }
                     }
                 }
-                @let rows = feed(app, 20);
-                @if !rows.is_empty() {
-                    h2 { "recently" }
+                @let (on, steps) = crate::day::latest(&app.board.read().unwrap(), &me, &[]);
+                @if !steps.is_empty() {
+                    h2 {
+                        "the day " small { (on.format("%a %-d %b")) " · " (steps.len()) " steps · "
+                            (steps.iter().filter(|s| s.mine).count()) " yours · "
+                            (crate::day::hands(&steps).len()) " hands" }
+                    }
                     table {
-                        @for (at, by, verb, id, text) in &rows {
-                            tr {
-                                td class="dim ago" { (ago(at)) }
-                                td class="id" { (by) }
-                                td class={ "v v-" (verb) } { (verb) }
-                                td class="id" { (id) }
-                                td { (text) }
+                        @if steps.len() > PATH {
+                            tr { td class="dim" colspan="5" { "… " (steps.len() - PATH) " earlier" } }
+                        }
+                        @for st in steps.iter().skip(steps.len().saturating_sub(PATH)) {
+                            tr class=@if st.mine { "mine" } {
+                                td class="dim ago" { (st.clock) }
+                                td class="id" { @if st.mine { "you" } @else { (st.by) } }
+                                td class={ "v v-" (st.verb) } { (st.word) }
+                                td class="id" { (st.id) }
+                                td {
+                                    @if st.verb == "ask" { @if let Some(to) = &st.to { span class="who" { "→ " (to) ": " } } }
+                                    (st.what)
+                                    @if st.times > 1 { " " span class="dim" { "×" (st.times) } }
+                                    @if st.word == "opened" { @for t in &st.topics { " " span class="t" { "#" (t) } } }
+                                    @if st.word == "missed" { @if let Some(f) = &st.fold { " " span class="dim" { "(" (f) ")" } } }
+                                }
                             }
                         }
+                    }
+                }
+                @let m = crate::metrics::of(&app.board.read().unwrap(), 7, &[]);
+                h2 { "how it went " small { (m.days) " days · " (m.events) " events" } }
+                table {
+                    @for (label, value) in crate::metrics::rows(&m) {
+                        tr { td class="lab" { (label) } td { (value) } }
                     }
                 }
                 @if !s.contested.is_empty() {
@@ -677,6 +706,10 @@ pub fn page(app: &App, who: &Who) -> Markup {
         }
     }
 }
+
+/// How many steps of the day the page draws. The whole path is in
+/// `kapwa day`; a page that never ends is a page nobody reads to the end.
+const PATH: usize = 40;
 
 fn blank<'a>(s: &'a str, d: &'a str) -> &'a str {
     if s.is_empty() {
@@ -719,6 +752,8 @@ small{font-weight:normal;color:#888} .meta,.dim,.t{color:#888} .ok{color:#2a7} .
 table{border-collapse:collapse;width:100%} td{padding:.2rem .5rem .2rem 0;vertical-align:top;border-top:1px solid #eee}
 .id{white-space:nowrap} .pri{width:2rem} .who{white-space:nowrap}
 .st-asked{color:#c33} .st-taken{color:#27c} .st-open{color:#666}
+.mine td{background:#fffbe9} .lab{color:#888;white-space:nowrap;width:7rem}
+.ago{white-space:nowrap}
 footer{margin-top:2rem;color:#888;font-size:.8rem}
 .ago{white-space:nowrap;text-align:right;width:3rem} .v{color:#888;white-space:nowrap}
 .v-take{color:#27c} .v-ask{color:#c33} .v-done{color:#2a7}

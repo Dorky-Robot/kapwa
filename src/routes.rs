@@ -385,14 +385,10 @@ struct DayQ {
     t: Option<String>,
 }
 
-fn on_day(q: &DayQ) -> Result<chrono::NaiveDate, Response> {
+fn on_day(q: &DayQ) -> Result<chrono::NaiveDate, String> {
     let given = q.on.clone().unwrap_or_else(|| "today".into());
-    crate::day::parse_on(&given).ok_or_else(|| {
-        bad(
-            StatusCode::BAD_REQUEST,
-            &format!("`{given}` is not a day: today · yesterday · YYYY-MM-DD"),
-        )
-    })
+    crate::day::parse_on(&given)
+        .ok_or_else(|| format!("`{given}` is not a day: today · yesterday · YYYY-MM-DD"))
 }
 
 async fn day(State(app): State<App>, caller: Caller, Query(q): Query<DayQ>) -> Response {
@@ -402,7 +398,7 @@ async fn day(State(app): State<App>, caller: Caller, Query(q): Query<DayQ>) -> R
     };
     let on = match on_day(&q) {
         Ok(d) => d,
-        Err(r) => return r,
+        Err(e) => return bad(StatusCode::BAD_REQUEST, &e),
     };
     let st = app.board.read().unwrap().clone();
     let steps = crate::day::day(&st, on, &who.name, &asked_for(&q.t));
@@ -416,7 +412,7 @@ async fn day_txt(State(app): State<App>, caller: Caller, Query(q): Query<DayQ>) 
     };
     match on_day(&q) {
         Ok(on) => text(render::day(&app, &who, on, &asked_for(&q.t))),
-        Err(r) => r,
+        Err(e) => bad(StatusCode::BAD_REQUEST, &e),
     }
 }
 
@@ -641,6 +637,8 @@ mod tests {
             "/api/prime.txt",
             "/api/mine",
             "/api/state",
+            "/api/day.txt",
+            "/api/stats.txt",
         ] {
             assert_eq!(
                 call(&app, get_req(p, None)).await.0,
@@ -844,6 +842,51 @@ mod tests {
             serde_json::from_str::<Value>(&mine).unwrap()["asked"][0]["id"],
             "plan"
         );
+    }
+
+    #[tokio::test]
+    async fn the_day_is_what_everyone_did_and_your_own_lines_say_you() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = app(tmp.path());
+        let v = say(
+            &app,
+            "ana-key",
+            json!({"kind":"say","text":"Roof leaks","t":["roof"]}),
+        )
+        .await;
+        let id = v["id"].as_str().unwrap().to_string();
+        say(&app, "claude-key", json!({"kind":"take","id":&id})).await;
+
+        let (st, body) = call(&app, get_req("/api/day.txt", Some("claude-key"))).await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(body.contains("the day"), "{body}");
+        assert!(body.contains("ana") && body.contains("opened"), "{body}");
+        // the reader's own move is theirs, and says so
+        assert!(body.contains("you") && body.contains("took"), "{body}");
+
+        // a day with nothing in it says so rather than lying with an empty list
+        let (_, body) = call(
+            &app,
+            get_req("/api/day.txt?on=2001-01-01", Some("claude-key")),
+        )
+        .await;
+        assert!(body.contains("nothing happened on 2001-01-01"), "{body}");
+        // and something that is not a day is refused, with what one looks like
+        let (st, body) = call(&app, get_req("/api/day.txt?on=soon", Some("claude-key"))).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST);
+        assert!(body.contains("YYYY-MM-DD"), "{body}");
+
+        // the numbers are the same events counted: one opened, one taken
+        let (st, body) = call(&app, get_req("/api/stats", Some("claude-key"))).await;
+        assert_eq!(st, StatusCode::OK);
+        let m: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            (m["opened"].as_u64(), m["taken"].as_u64()),
+            (Some(1), Some(1))
+        );
+        assert_eq!(m["held_now"], 1);
+        let (_, body) = call(&app, get_req("/api/stats.txt?t=fence", Some("claude-key"))).await;
+        assert!(body.contains("0 opened"), "a topic narrows it: {body}");
     }
 
     /// A session lives in a cookie set at `Path=/`. A removal that does not

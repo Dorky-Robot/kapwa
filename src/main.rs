@@ -14,6 +14,7 @@ mod cli;
 mod config;
 mod day;
 mod log;
+mod metrics;
 mod oidc;
 mod puller;
 mod render;

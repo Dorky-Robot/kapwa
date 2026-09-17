@@ -103,6 +103,8 @@ an OIDC client in that network's Pocket ID with callback
 src/config.rs   env → Config
 src/log.rs      per-writer logs, own seq, mirror ingest (contiguous only)
 src/board.rs    the fold
+src/day.rs      the same events read as a day: who did what, in order
+src/metrics.rs  and read as numbers: where the work waited
 src/puller.rs   one task per peer under a restart-on-panic supervisor; backoff 5s→5m
 src/auth.rs     Caller extractor: mesh token | agent key | session
 src/oidc.rs     Pocket ID sign-in (openidconnect, PKCE, encrypted cookie)

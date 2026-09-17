@@ -12,7 +12,7 @@
 use chrono::{DateTime, Local, NaiveDate};
 use serde::Serialize;
 
-use crate::board::{is, Item, State};
+use crate::board::{Item, State};
 
 /// One thing somebody did, placed in the day.
 #[derive(Clone, Debug, Serialize)]
@@ -35,6 +35,9 @@ pub struct Step {
     pub topics: Vec<String>,
     /// the reader did this one
     pub mine: bool,
+    /// how many events this line stands for: one, unless a run of them
+    /// was collapsed
+    pub times: usize,
 }
 
 fn when(at: &str) -> Option<DateTime<Local>> {
@@ -59,7 +62,7 @@ fn wanted(i: &Item, topics: &[String]) -> bool {
 
 /// How one event reads. The first `say` brings an item into being, so it
 /// opened it; a later one is a word on something that already exists.
-fn word_for(verb: &str, first: bool, fold: Option<&str>) -> &'static str {
+fn word_for(verb: &str, first: bool, fold: Option<&str>) -> String {
     match verb {
         "say" if first => "opened",
         "say" if fold == Some("answers the ask") => "answered",
@@ -69,8 +72,9 @@ fn word_for(verb: &str, first: bool, fold: Option<&str>) -> &'static str {
         "drop" => "let go",
         "done" => "finished",
         "ask" => "asked",
-        _ => verb,
+        other => return other.to_string(),
     }
+    .to_string()
 }
 
 /// Every step in every item, in the order they happened: `(at, writer, seq)`,
@@ -81,7 +85,7 @@ pub fn walk(st: &State, me: &str, topics: &[String]) -> Vec<Step> {
         for (n, h) in item.history.iter().enumerate() {
             let word = word_for(&h.verb, n == 0, h.fold.as_deref());
             let text = h.text.clone().filter(|t| !t.is_empty());
-            let what = match (word, &text) {
+            let what = match (word.as_str(), &text) {
                 ("wrote" | "answered" | "asked" | "finished", Some(t)) => t.clone(),
                 _ => item.title.clone(),
             };
@@ -91,17 +95,23 @@ pub fn walk(st: &State, me: &str, topics: &[String]) -> Vec<Step> {
                 h.seq,
                 Step {
                     at: h.at.clone(),
-                    clock: when(&h.at).map(|t| t.format("%H:%M").to_string()).unwrap_or_default(),
+                    clock: when(&h.at)
+                        .map(|t| t.format("%H:%M").to_string())
+                        .unwrap_or_default(),
                     by: h.by.clone(),
                     verb: h.verb.clone(),
-                    word: word.to_string(),
+                    word,
                     id: item.id.clone(),
                     title: item.title.clone(),
                     what,
                     to: h.to.clone(),
                     fold: h.fold.clone(),
                     topics: item.topics.clone(),
-                    mine: is(&h.by, me) && h.by == me,
+                    // the exact name, not the key: two sessions of one
+                    // key are two hands, and telling them apart is the
+                    // whole point of marking your own
+                    mine: h.by == me,
+                    times: 1,
                 },
             ));
         }
@@ -110,14 +120,57 @@ pub fn walk(st: &State, me: &str, topics: &[String]) -> Vec<Step> {
     steps.into_iter().map(|(_, _, _, s)| s).collect()
 }
 
+/// One person writing several notes on one item, one after another, is one
+/// move in a day, not six. Collapse those runs — an import, or a session
+/// catching a record up, otherwise drowns everything else that happened.
+/// The events are untouched; only the reading is.
+pub fn collapse(steps: Vec<Step>) -> Vec<Step> {
+    let mut out: Vec<Step> = vec![];
+    for s in steps {
+        match out.last_mut() {
+            Some(p) if p.by == s.by && p.id == s.id && p.word == s.word => {
+                p.times += 1;
+                // the last word on it is the one that still stands
+                p.what = s.what;
+                p.at = s.at;
+                p.clock = s.clock;
+            }
+            _ => out.push(s),
+        }
+    }
+    out
+}
+
 /// The path through one day, in the reader's own timezone. A day is where
 /// the person is, not where the clock says UTC is: work done at eight in
 /// the evening belongs to that evening.
 pub fn day(st: &State, on: NaiveDate, me: &str, topics: &[String]) -> Vec<Step> {
-    walk(st, me, topics)
-        .into_iter()
-        .filter(|s| when(&s.at).is_some_and(|t| t.date_naive() == on))
-        .collect()
+    collapse(
+        walk(st, me, topics)
+            .into_iter()
+            .filter(|s| when(&s.at).is_some_and(|t| t.date_naive() == on))
+            .collect(),
+    )
+}
+
+/// Today — unless nothing has happened yet today, and then the last day
+/// that did have something. A board opened first thing in the morning
+/// should show the day it is catching you up on, not a blank.
+pub fn latest(st: &State, me: &str, topics: &[String]) -> (NaiveDate, Vec<Step>) {
+    let all = walk(st, me, topics);
+    let today = Local::now().date_naive();
+    let on = all
+        .iter()
+        .rev()
+        .find_map(|s| when(&s.at))
+        .map(|t| t.date_naive().min(today))
+        .unwrap_or(today);
+    let steps = collapse(
+        all.into_iter()
+            .filter(|s| when(&s.at).is_some_and(|t| t.date_naive() == on))
+            .collect(),
+    );
+    (on, steps)
 }
 
 /// Everyone who did something, in the order they first appear.
@@ -164,12 +217,29 @@ mod tests {
     #[test]
     fn the_path_is_one_line_per_event_across_items_in_time_order() {
         let st = state(&[
-            ev("say", "x", &at(17, 12), "ana", json!({"text":"Roof leaks","t":["roof"]})),
+            ev(
+                "say",
+                "x",
+                &at(17, 12),
+                "ana",
+                json!({"text":"Roof leaks","t":["roof"]}),
+            ),
             ev("say", "y", &at(17, 13), "ben", json!({"text":"Fence"})),
             ev("take", "x", &at(17, 14), "me/1", json!({})),
-            ev("say", "x", &at(17, 15), "ben", json!({"text":"over the back door"})),
+            ev(
+                "say",
+                "x",
+                &at(17, 15),
+                "ben",
+                json!({"text":"over the back door"}),
+            ),
         ]);
-        let steps = day(&st, NaiveDate::from_ymd_opt(2026, 9, 17).unwrap(), "me/1", &[]);
+        let steps = day(
+            &st,
+            NaiveDate::from_ymd_opt(2026, 9, 17).unwrap(),
+            "me/1",
+            &[],
+        );
         let read: Vec<(&str, &str, &str)> = steps
             .iter()
             .map(|s| (s.by.as_str(), s.word.as_str(), s.what.as_str()))
@@ -190,8 +260,20 @@ mod tests {
     #[test]
     fn a_day_holds_only_that_day_and_topics_narrow_it() {
         let st = state(&[
-            ev("say", "x", &at(16, 12), "ana", json!({"text":"Yesterday","t":["roof"]})),
-            ev("say", "y", &at(17, 12), "ana", json!({"text":"Today","t":["fence"]})),
+            ev(
+                "say",
+                "x",
+                &at(16, 12),
+                "ana",
+                json!({"text":"Yesterday","t":["roof"]}),
+            ),
+            ev(
+                "say",
+                "y",
+                &at(17, 12),
+                "ana",
+                json!({"text":"Today","t":["fence"]}),
+            ),
         ]);
         let d17 = NaiveDate::from_ymd_opt(2026, 9, 17).unwrap();
         assert_eq!(day(&st, d17, "me", &[]).len(), 1);
@@ -206,14 +288,60 @@ mod tests {
             ev("say", "x", &at(17, 12), "ana", json!({"text":"X"})),
             ev("take", "x", &at(17, 13), "ana", json!({})),
             ev("take", "x", &at(17, 14), "ben", json!({})),
-            ev("ask", "x", &at(17, 15), "ana", json!({"to":"felix","text":"A or B?"})),
+            ev(
+                "ask",
+                "x",
+                &at(17, 15),
+                "ana",
+                json!({"to":"felix","text":"A or B?"}),
+            ),
             ev("say", "x", &at(17, 16), "felix", json!({"text":"B"})),
         ]);
-        let words: Vec<&str> = day(&st, NaiveDate::from_ymd_opt(2026, 9, 17).unwrap(), "me", &[])
-            .iter()
-            .map(|s| s.word.as_str())
-            .collect();
+        let words: Vec<String> = day(
+            &st,
+            NaiveDate::from_ymd_opt(2026, 9, 17).unwrap(),
+            "me",
+            &[],
+        )
+        .into_iter()
+        .map(|s| s.word)
+        .collect();
         assert_eq!(words, ["opened", "took", "missed", "asked", "answered"]);
+    }
+
+    #[test]
+    fn a_run_of_notes_on_one_item_is_one_move_in_the_day() {
+        let st = state(&[
+            ev("say", "x", &at(17, 12), "ana", json!({"text":"X"})),
+            ev("say", "x", &at(17, 13), "ana", json!({"text":"one"})),
+            ev("say", "x", &at(17, 13), "ana", json!({"text":"two"})),
+            ev("say", "x", &at(17, 13), "ana", json!({"text":"three"})),
+            // a different hand breaks the run, and so does a different verb
+            ev("say", "x", &at(17, 14), "ben", json!({"text":"mine"})),
+            ev("take", "x", &at(17, 15), "ana", json!({})),
+            ev("say", "x", &at(17, 16), "ana", json!({"text":"back"})),
+        ]);
+        let steps = day(
+            &st,
+            NaiveDate::from_ymd_opt(2026, 9, 17).unwrap(),
+            "me",
+            &[],
+        );
+        let read: Vec<(&str, &str, usize)> = steps
+            .iter()
+            .map(|s| (s.by.as_str(), s.what.as_str(), s.times))
+            .collect();
+        assert_eq!(
+            read,
+            [
+                ("ana", "X", 1),
+                ("ana", "three", 3),
+                ("ben", "mine", 1),
+                ("ana", "X", 1),
+                ("ana", "back", 1),
+            ],
+            "a run keeps its last word and says how many it stands for"
+        );
     }
 
     #[test]
@@ -222,9 +350,33 @@ mod tests {
             ev("say", "x", &at(17, 12), "claude/aaa", json!({"text":"X"})),
             ev("say", "y", &at(17, 13), "claude/bbb", json!({"text":"Y"})),
         ]);
-        let steps = day(&st, NaiveDate::from_ymd_opt(2026, 9, 17).unwrap(), "claude/aaa", &[]);
+        let steps = day(
+            &st,
+            NaiveDate::from_ymd_opt(2026, 9, 17).unwrap(),
+            "claude/aaa",
+            &[],
+        );
         assert_eq!(steps.iter().filter(|s| s.mine).count(), 1);
         assert!(steps[0].mine && !steps[1].mine);
+    }
+
+    #[test]
+    fn the_latest_day_is_today_or_the_last_one_that_had_anything() {
+        let st = state(&[ev(
+            "say",
+            "x",
+            &at(16, 12),
+            "ana",
+            json!({"text":"Yesterday"}),
+        )]);
+        let (on, steps) = latest(&st, "me", &[]);
+        assert_eq!(
+            (on, steps.len()),
+            (NaiveDate::from_ymd_opt(2026, 9, 16).unwrap(), 1)
+        );
+        // nothing at all: today, empty, and no panic
+        let (on, steps) = latest(&State::default(), "me", &[]);
+        assert_eq!((on, steps.len()), (Local::now().date_naive(), 0));
     }
 
     #[test]
@@ -232,10 +384,7 @@ mod tests {
         let today = Local::now().date_naive();
         assert_eq!(parse_on("today"), Some(today));
         assert_eq!(parse_on("yesterday"), today.pred_opt());
-        assert_eq!(
-            parse_on("2026-09-15"),
-            NaiveDate::from_ymd_opt(2026, 9, 15)
-        );
+        assert_eq!(parse_on("2026-09-15"), NaiveDate::from_ymd_opt(2026, 9, 15));
         assert_eq!(parse_on("last tuesday"), None);
     }
 }

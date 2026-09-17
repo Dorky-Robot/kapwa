@@ -53,6 +53,8 @@ participant. Coordination happens by leaving marks, not by sending messages.
 src/config.rs   env → Config (reads ~/.config/kapwa/env itself)
 src/log.rs      per-writer logs, own seq, mirror ingest (contiguous only)
 src/board.rs    the fold
+src/day.rs      a second fold: the day as a path, one line per move
+src/metrics.rs  a third: flow, waiting, friction — no new verbs to record it
 src/puller.rs   one task per peer under a restart-on-panic supervisor
 src/auth.rs     who is asking: mesh token | agent key (+ session tag) | sign-in
 src/cli.rs      the client half of the one binary; holds no rules of its own

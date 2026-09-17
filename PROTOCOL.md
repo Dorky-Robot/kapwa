@@ -11,7 +11,7 @@ event   {"kind": "...", "id": "...", ...anything you like}
         the node adds:  writer  seq  at  by
 
 write   POST /api/event
-read    GET  /api/prime.txt · /api/board.txt
+read    GET  /api/prime.txt · /api/board.txt · /api/day.txt · /api/stats.txt
 sync    GET  /api/log/<writer>?since=<seq>
         POST /api/log/<writer>
 
@@ -128,6 +128,8 @@ POST /api/event            {"kind":"say","text":"…","t":["roof"]}
 GET  /api/prime.txt?t=a,b  what involves you, sized for a context window
 GET  /api/board.txt?t=a,b  everything open
 GET  /api/mine?t=a,b       {you, asked, held, said_to, open}
+GET  /api/day.txt?on=today what happened that day, in order, and who did it
+GET  /api/stats.txt?days=7 where the work waited: flow, delays, friction
 GET  /api/item/<id>        one item with its history
 GET  /api/state            the whole fold
 GET  /api/peers            per-peer last ok / error / pulled / pushed
@@ -137,6 +139,11 @@ GET  /api/whoami
 `prime` and `mine` default to the topics listed for the key in the agents file
 (`name:token:role:topics`); `?t=` overrides. The board is never narrowed unless
 asked.
+
+`day` and `stats` add nothing to the record: both are folds over events that are
+already in the logs, the way the board is. A node that serves neither is still a
+complete node, and no writer has to remember to record anything for them to be
+right.
 
 ## Riding along
 
