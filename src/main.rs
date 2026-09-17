@@ -31,6 +31,9 @@ pub struct Inner {
     pub board: RwLock<board::State>,
     pub peers: puller::Peers,
     pub oidc: RwLock<Option<Arc<openidconnect::core::CoreClient>>>,
+    /// bumped whenever the board changes, so anything that cares can wait
+    /// for the next change instead of asking again and again
+    pub tick: tokio::sync::watch::Sender<u64>,
     /// where the identity provider ends *its* session, if it says
     pub end_session: RwLock<Option<String>>,
     pub http: reqwest::Client,
@@ -75,6 +78,7 @@ impl App {
             board: RwLock::new(board::State::default()),
             peers: Arc::new(Mutex::new(Default::default())),
             oidc: RwLock::new(None),
+            tick: tokio::sync::watch::channel(0).0,
             end_session: RwLock::new(None),
             http: reqwest::Client::builder()
                 .user_agent(concat!("kapwa/", env!("CARGO_PKG_VERSION")))
@@ -101,6 +105,13 @@ impl App {
             built_at: log::now(),
         };
         *self.board.write().unwrap() = st;
+        self.tick.send_modify(|n| *n += 1);
+    }
+
+    /// Wait until the board changes, or give up. Returns whether it changed.
+    pub async fn changed(&self, within: std::time::Duration) -> bool {
+        let mut rx = self.tick.subscribe();
+        tokio::time::timeout(within, rx.changed()).await.is_ok()
     }
 }
 

@@ -41,6 +41,8 @@ pub fn router(app: App) -> Router {
         .route("/api/state", get(state))
         .route("/api/item/:id", get(item))
         .route("/api/peers", get(peers))
+        .route("/api/feed", get(feed))
+        .route("/api/live", get(live))
         .fallback(|| async {
             (
                 StatusCode::NOT_FOUND,
@@ -101,9 +103,15 @@ async fn dashboard(
 
 // ── sync: nodes ────────────────────────────────────────────────────
 
-async fn writers(State(app): State<App>, caller: Caller) -> Response {
+async fn writers(State(app): State<App>, caller: Caller, Query(q): Query<Since>) -> Response {
     if let Err(r) = caller.allow(&[Kind::Mesh, Kind::Agent]) {
         return r;
+    }
+    // hold it open until something lands, so a peer hears within a round
+    // trip instead of within its polling interval
+    if let Some(secs) = q.wait.filter(|s| *s > 0) {
+        app.changed(std::time::Duration::from_secs(secs.min(60)))
+            .await;
     }
     let m: serde_json::Map<String, Value> = app
         .logs
@@ -117,6 +125,10 @@ async fn writers(State(app): State<App>, caller: Caller) -> Response {
 #[derive(Deserialize)]
 struct Since {
     since: Option<u64>,
+    /// seconds to hold the request open until something changes. Waiting
+    /// costs one held connection; asking again and again costs a request
+    /// per interval per peer, forever.
+    wait: Option<u64>,
 }
 
 async fn log(
@@ -324,6 +336,63 @@ async fn item(State(app): State<App>, caller: Caller, Path(id): Path<String>) ->
         Ok(None) => bad(StatusCode::NOT_FOUND, "no such item"),
         Err(e) => bad(StatusCode::CONFLICT, &e),
     }
+}
+
+/// What just happened, newest first. An agent coming back after a while
+/// wants this, not the whole board.
+async fn feed(State(app): State<App>, caller: Caller, Query(q): Query<Limit>) -> Response {
+    if let Err(r) = caller.allow(&[Kind::Agent, Kind::User]) {
+        return r;
+    }
+    let rows = render::feed(&app, q.limit.unwrap_or(30).min(200));
+    if q.format.as_deref() == Some("json") {
+        let v: Vec<Value> = rows
+            .into_iter()
+            .map(|(at, by, verb, id, text)| json!({"at": at, "by": by, "verb": verb, "id": id, "text": text}))
+            .collect();
+        return Json(v).into_response();
+    }
+    text(
+        rows.into_iter()
+            .map(|(at, by, verb, id, text)| {
+                format!(
+                    "{:>4}  {:<18} {:<5} {:<8} {text}",
+                    render::ago(&at),
+                    by,
+                    verb,
+                    id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n",
+    )
+}
+
+/// A change happened. One line per change, nothing in it: whoever cares
+/// asks for what they want. Costs a held connection and no polling.
+async fn live(State(app): State<App>, caller: Caller) -> Response {
+    if let Err(r) = caller.allow(&[Kind::Agent, Kind::User]) {
+        return r;
+    }
+    let stream = async_stream::stream! {
+        // say hello at once, so a client knows it is connected
+        yield Ok::<_, std::convert::Infallible>(axum::response::sse::Event::default().data("open"));
+        loop {
+            // a heartbeat every 20s keeps a proxy from closing a quiet stream
+            let changed = app.changed(std::time::Duration::from_secs(20)).await;
+            yield Ok(axum::response::sse::Event::default().data(if changed { "board" } else { "tick" }));
+        }
+    };
+    axum::response::Sse::new(stream)
+        .keep_alive(axum::response::sse::KeepAlive::default())
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct Limit {
+    limit: Option<usize>,
+    format: Option<String>,
 }
 
 async fn peers(State(app): State<App>, caller: Caller) -> Response {

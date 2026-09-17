@@ -22,6 +22,7 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 maud = "0.26"
+async-stream = "0.3"
 constant_time_eq = "0.3"
 base64 = "0.22"
 cookie = "0.18"

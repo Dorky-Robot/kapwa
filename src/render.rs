@@ -106,6 +106,75 @@ fn peer_line(u: &str, s: &PeerStatus) -> String {
     }
 }
 
+/// What just happened, newest first: the log read as prose rather than as
+/// state. A board says how things stand; this says what anyone did.
+pub fn feed(app: &App, limit: usize) -> Vec<(String, String, String, String, String)> {
+    let st = app.board.read().unwrap();
+    let mut rows: Vec<(String, String, String, String, String)> = st
+        .items
+        .values()
+        .flat_map(|i| {
+            i.history.iter().map(move |h| {
+                (
+                    h.at.clone(),
+                    h.by.clone(),
+                    h.verb.clone(),
+                    i.id.clone(),
+                    h.text.clone().unwrap_or_else(|| i.title.clone()),
+                )
+            })
+        })
+        .collect();
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    rows.truncate(limit);
+    rows
+}
+
+/// How long ago, in the fewest characters that still mean something.
+pub fn ago(at: &str) -> String {
+    let Ok(then) = chrono::DateTime::parse_from_rfc3339(at) else {
+        return "?".into();
+    };
+    let secs = (chrono::Utc::now() - then.with_timezone(&chrono::Utc))
+        .num_seconds()
+        .max(0);
+    match secs {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m", s / 60),
+        s if s < 86400 => format!("{}h", s / 3600),
+        s => format!("{}d", s / 86400),
+    }
+}
+
+/// Who has spoken lately, and what they hold. Derived from the log, so
+/// nobody has to announce themselves and nothing expires but attention.
+pub fn about(app: &App) -> Vec<(String, String, usize)> {
+    let st = app.board.read().unwrap();
+    let mut last: std::collections::BTreeMap<String, String> = Default::default();
+    for i in st.items.values() {
+        for h in &i.history {
+            let e = last.entry(h.by.clone()).or_default();
+            if h.at > *e {
+                *e = h.at.clone();
+            }
+        }
+    }
+    let mut v: Vec<(String, String, usize)> = last
+        .into_iter()
+        .map(|(who, at)| {
+            let holds = st
+                .items
+                .values()
+                .filter(|i| i.owner == who && i.status != "done")
+                .count();
+            (who, at, holds)
+        })
+        .collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1));
+    v.truncate(8);
+    v
+}
+
 /// One item, one line, sized for a context window.
 pub fn line(i: &Item) -> String {
     let who = match i.status.as_str() {
@@ -147,6 +216,32 @@ pub fn board(app: &App, topics: &[String]) -> String {
         }
         out.push(format!("\n{label} ({})", rows.len()));
         out.extend(rows.iter().map(|i| format!("  {}", line(i))));
+    }
+    let who = about(app);
+    if !who.is_empty() {
+        out.push("\nabout".to_string());
+        for (w, at, holds) in &who {
+            let h = if *holds > 0 {
+                format!(" · holds {holds}")
+            } else {
+                String::new()
+            };
+            out.push(format!("  {:<18} {:>4} ago{h}", w, ago(at)));
+        }
+    }
+    let rows = feed(app, 8);
+    if !rows.is_empty() {
+        out.push("\nrecently".to_string());
+        for (at, by, verb, id, text) in &rows {
+            out.push(format!(
+                "  {:>4}  {:<18} {:<5} {:<8} {}",
+                ago(at),
+                by,
+                verb,
+                id,
+                text
+            ));
+        }
     }
     if !s.contested.is_empty() {
         out.push(format!("\ncontested ({})", s.contested.len()));
@@ -389,7 +484,7 @@ pub fn page(app: &App, who: &Who) -> Markup {
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width,initial-scale=1";
-                meta http-equiv="refresh" content="15";
+                noscript { meta http-equiv="refresh" content="15"; }
                 title { "kapwa · " (app.cfg.writer) }
                 style { (CSS) }
             }
@@ -428,6 +523,34 @@ pub fn page(app: &App, who: &Who) -> Markup {
                         }
                     }
                 }
+                @let who = about(app);
+                @if !who.is_empty() {
+                    h2 { "about" }
+                    table {
+                        @for (w, at, holds) in &who {
+                            tr {
+                                td class="id" { (w) }
+                                td class="dim" { (ago(at)) " ago" }
+                                td class="dim" { @if *holds > 0 { "holds " (holds) } }
+                            }
+                        }
+                    }
+                }
+                @let rows = feed(app, 20);
+                @if !rows.is_empty() {
+                    h2 { "recently" }
+                    table {
+                        @for (at, by, verb, id, text) in &rows {
+                            tr {
+                                td class="dim ago" { (ago(at)) }
+                                td class="id" { (by) }
+                                td class={ "v v-" (verb) } { (verb) }
+                                td class="id" { (id) }
+                                td { (text) }
+                            }
+                        }
+                    }
+                }
                 @if !s.contested.is_empty() {
                     h2 { "contested " small { (s.contested.len()) } }
                     table {
@@ -436,7 +559,8 @@ pub fn page(app: &App, who: &Who) -> Markup {
                         }
                     }
                 }
-                footer { "read-only · refreshes every 15s" }
+                footer { span id="live" { "connecting…" } " · read-only" }
+                script { (maud::PreEscaped(LIVE_JS)) }
             }
         }
     }
@@ -450,6 +574,32 @@ fn blank<'a>(s: &'a str, d: &'a str) -> &'a str {
     }
 }
 
+/// The page listens for changes instead of asking for them. Still read-only:
+/// it fetches this same page and swaps the body, and never writes anything.
+const LIVE_JS: &str = r#"
+(function () {
+  var dot = document.getElementById('live'), es;
+  function say(t, cls) { dot.textContent = t; dot.className = cls || ''; }
+  function refresh() {
+    fetch(location.pathname, { headers: { accept: 'text/html' } })
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var now = doc.querySelector('main') || doc.body;
+        var here = document.querySelector('main') || document.body;
+        if (now.innerHTML !== here.innerHTML) here.innerHTML = now.innerHTML;
+      });
+  }
+  function open_() {
+    es = new EventSource('/api/live');
+    es.onopen = function () { say('live', 'ok'); };
+    es.onmessage = function (e) { if (e.data === 'board') refresh(); };
+    es.onerror = function () { say('reconnecting…'); es.close(); setTimeout(open_, 3000); };
+  }
+  open_();
+})();
+"#;
+
 const CSS: &str = r#"
 body{font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;margin:2rem auto;max-width:72rem;padding:0 1rem;color:#222;background:#fafafa}
 h1{font-size:1rem;margin:0 0 .25rem} h2{font-size:.9rem;margin:1.5rem 0 .25rem;text-transform:uppercase;letter-spacing:.05em}
@@ -458,6 +608,9 @@ table{border-collapse:collapse;width:100%} td{padding:.2rem .5rem .2rem 0;vertic
 .id{white-space:nowrap} .pri{width:2rem} .who{white-space:nowrap}
 .st-asked{color:#c33} .st-taken{color:#27c} .st-open{color:#666}
 footer{margin-top:2rem;color:#888;font-size:.8rem}
+.ago{white-space:nowrap;text-align:right;width:3rem} .v{color:#888;white-space:nowrap}
+.v-take{color:#27c} .v-ask{color:#c33} .v-done{color:#2a7}
+#live.ok::before{content:"● ";color:#2a7}
 .bar{display:flex;justify-content:flex-end;gap:1rem;align-items:baseline;color:#888;margin-bottom:1rem}
 .out{color:#222;border:1px solid #ccc;border-radius:6px;padding:.15rem .6rem;text-decoration:none}.out:hover{border-color:#222}
 "#;

@@ -22,7 +22,13 @@ use serde::Serialize;
 use crate::log::{now, Event};
 use crate::App;
 
-const BASE: u64 = 5_000;
+/// How long a peer is asked to hold the question open. Long enough that a
+/// quiet mesh is nearly silent, short enough that a dead connection is
+/// noticed and a sleeping laptop catches up on waking.
+const WAIT: u64 = 25;
+/// What to sleep between syncs. Near nothing while waiting works, because
+/// the waiting is the interval; the backoff is for a peer that is down.
+const BASE: u64 = 500;
 const MAX: u64 = 300_000;
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -61,7 +67,7 @@ pub fn supervise(app: App) {
 async fn run(app: App, url: String) {
     let mut interval = BASE;
     loop {
-        let outcome = pull(&app, &url).await;
+        let outcome = pull(&app, &url, WAIT).await;
         {
             let mut peers = app.peers.lock().unwrap();
             let st = peers.entry(url.clone()).or_default();
@@ -85,8 +91,16 @@ async fn run(app: App, url: String) {
     }
 }
 
-async fn pull(app: &App, url: &str) -> Result<(usize, usize), String> {
-    let theirs: HashMap<String, u64> = get(app, &format!("{url}/api/writers")).await?;
+async fn pull(app: &App, url: &str, wait: u64) -> Result<(usize, usize), String> {
+    // ask the peer to hold the question until it has an answer: one held
+    // request per half-minute instead of a poll every few seconds, and the
+    // news arrives in a round trip rather than at the next tick
+    let theirs: HashMap<String, u64> = get_for(
+        app,
+        &format!("{url}/api/writers?wait={wait}"),
+        Duration::from_secs(wait + 15),
+    )
+    .await?;
     let me = &app.cfg.writer;
     let mut n = 0;
     for (w, remote) in &theirs {
@@ -133,7 +147,15 @@ async fn offer(app: &App, url: &str, theirs: &HashMap<String, u64>) -> usize {
 
 // nodes identify to each other with the shared mesh token
 async fn get<T: serde::de::DeserializeOwned>(app: &App, u: &str) -> Result<T, String> {
-    let mut req = app.http.get(u).timeout(Duration::from_secs(10));
+    get_for(app, u, Duration::from_secs(10)).await
+}
+
+async fn get_for<T: serde::de::DeserializeOwned>(
+    app: &App,
+    u: &str,
+    t: Duration,
+) -> Result<T, String> {
+    let mut req = app.http.get(u).timeout(t);
     if let Some(t) = &app.cfg.mesh_token {
         req = req.bearer_auth(t);
     }
