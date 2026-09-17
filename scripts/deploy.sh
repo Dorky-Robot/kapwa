@@ -73,6 +73,8 @@ NEW=$ROOT/releases/$(date +%Y%m%d%H%M%S)
 mkdir -p "$NEW"
 mv /tmp/kapwa.new "$NEW/kapwa" && chmod +x "$NEW/kapwa"
 ln -sfn "$NEW" "$ROOT/current"
+# one name to find: the client is the same binary, on PATH
+mkdir -p "$HOME/.local/bin" && ln -sfn "$ROOT/current/kapwa" "$HOME/.local/bin/kapwa"
 
 ENV=$HOME/.config/kapwa/env
 if [ -f "$ENV.new" ]; then

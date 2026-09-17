@@ -36,6 +36,7 @@ kapwa — what participants owe each other
   --t      a topic; repeat it, or comma-separate. an item can have many
   --wait   (take) wait one sync, then answer CLAIMED · LOST to x
   --tag    sign as <name>/<tag>: one session of many (or KAPWA_TAG)
+  --me     which of your keys: ~/.config/kapwa/keys/<name> (or KAPWA_ME)
   --json   force JSON; it is already the default when piped
 
   key      KAPWA_KEY, else ~/.config/kapwa/key
@@ -57,6 +58,7 @@ struct Args {
     p: Option<String>,
     name: Option<String>,
     tag: Option<String>,
+    me: Option<String>,
     json: bool,
     wait: bool,
     hook: bool,
@@ -73,6 +75,7 @@ fn parse(raw: &[String]) -> Result<Args, String> {
             "--p" => a.p = Some(val("--p")?),
             "--as" => a.name = Some(val("--as")?),
             "--tag" => a.tag = Some(val("--tag")?),
+            "--me" => a.me = Some(val("--me")?),
             "--json" => a.json = true,
             "--wait" => a.wait = true,
             "--hook" => a.hook = true,
@@ -112,8 +115,14 @@ impl Node {
                 env("KAPWA_PORT").unwrap_or_else(|| "3410".into())
             )
         });
+        // on one OS account every key is readable by every process, so
+        // which one you sign with is a choice, not a wall
+        let file = match a.me.clone().or_else(|| env("KAPWA_ME")) {
+            Some(me) if crate::log::valid_name(&me) => format!(".config/kapwa/keys/{me}"),
+            _ => ".config/kapwa/key".to_string(),
+        };
         let key = env("KAPWA_KEY").or_else(|| {
-            std::fs::read_to_string(crate::config::home().join(".config/kapwa/key"))
+            std::fs::read_to_string(crate::config::home().join(&file))
                 .ok()
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
@@ -250,13 +259,39 @@ pub async fn run(raw: Vec<String>) -> i32 {
         Some((c, r)) if !c.starts_with('-') => (c.as_str(), r.to_vec()),
         _ => ("board", raw.clone()),
     };
-    let a = match parse(&rest) {
+    let mut a = match parse(&rest) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("kapwa: {e}\n\n{HELP}");
             return 2;
         }
     };
+    // a SessionStart hook hands us the session on stdin: make it this
+    // session's tag, so many sessions of one key are told apart
+    let mut hook_tag = None;
+    if cmd == "prime"
+        && a.hook
+        && a.tag.is_none()
+        && std::env::var("KAPWA_TAG").is_err()
+        && !std::io::stdin().is_terminal()
+    {
+        let mut buf = String::new();
+        let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf);
+        if let Some(sid) = serde_json::from_str::<Value>(&buf)
+            .ok()
+            .and_then(|v| v["session_id"].as_str().map(String::from))
+        {
+            let tag: String = sid
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .take(6)
+                .collect();
+            if !tag.is_empty() {
+                a.tag = Some(tag.clone());
+                hook_tag = Some(tag);
+            }
+        }
+    }
     let as_json = a.json || !std::io::stdout().is_terminal();
     let node = Node::new(&a);
     let usage = |m: &str| -> i32 {
@@ -284,7 +319,17 @@ pub async fn run(raw: Vec<String>) -> i32 {
                 if a.hook {
                     // a hook must never break the session it starts: say
                     // nothing rather than fail
-                    if let Ok(text) = got {
+                    if let Ok(mut text) = got {
+                        if let Some(tag) = &hook_tag {
+                            text += &format!("\nthis session signs with --tag {tag} (add it to every kapwa command, or export KAPWA_TAG={tag})\n");
+                            // some harnesses let a start hook set the session's environment
+                            if let Ok(f) = std::env::var("CLAUDE_ENV_FILE") {
+                                use std::io::Write;
+                                if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(f) {
+                                    let _ = writeln!(f, "export KAPWA_TAG={tag}");
+                                }
+                            }
+                        }
                         println!("{}", json!({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}));
                     }
                     return Ok(0);
