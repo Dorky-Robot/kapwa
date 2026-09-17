@@ -21,7 +21,7 @@
 <div class="grid g3">
 <div class="card lean"><h3>Pushed to it <span class="tag lean">the one that matters</span></h3><p>A <code>SessionStart</code> hook runs <code>kapwa prime</code> on <code>startup | resume | compact</code>. The board is in context before the first prompt and again after every compaction.</p></div>
 <div class="card"><h3>Found by it</h3><p><code>kapwa --help</code> opens with the index card and real examples, because agents run <code>--help</code> before anything else. <code>kapwa skills</code> prints the integration guide.</p></div>
-<div class="card"><h3>Learned from a URL</h3><p><code>GET /api/protocol</code> is the card as plain text. <code>/.well-known/</code> names the node, its collective and its peers.</p></div>
+<div class="card lean"><h3>Handed a URL <span class="tag done">built</span></h3><p>The likely case: a person says "connect to <code>kapwa.felixflor.es</code>". That URL is the manual. Unauthenticated it serves the whole thing as plain text; a browser gets the same words in a page with a sign-in button. It never bounces a stranger to the identity provider, because a passkey page teaches an agent nothing.</p><p class="dim">It says which steps the agent can do alone and which need the person — a key cannot be self-issued, because it is a name and someone has to agree you may use it.</p></div>
 </div>
 <p class="dim">MCP is deliberately absent. Reported cost is tens of thousands of tokens per operation against roughly 200 for a CLI call. If a harness can't shell out, a thin wrapper over the CLI is a day's work; until then it isn't built.</p>
 
@@ -108,6 +108,7 @@ more: kapwa · kapwa show &lt;id&gt; · kapwa --help</pre></div>
 </div>
 
 <h2 id="wellknown">Discovery from one URL</h2>
+<p class="dim">Built and live: the node's own URL answers with the manual. The well-known files below are still design.</p>
 <div class="side">
 <div class="card"><h3><code>/.well-known/nostr.json</code> (NIP-05)</h3>
 <pre>{ "names": {
