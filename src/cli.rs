@@ -23,6 +23,7 @@ kapwa — what participants owe each other
   kapwa ask <id> \"…\"        someone must answer    [--to who]
   kapwa ask \"…\" --to who    …about something new
 
+  kapwa topics              what topics are in use; look before inventing
   kapwa mine                what waits on me, what I hold
   kapwa show <id>           one item and its history
   kapwa prime               what an agent should know right now
@@ -33,7 +34,9 @@ kapwa — what participants owe each other
   kapwa setup claude        print the hook that primes every session
 
   <id>     any unique prefix will do, as with git
-  --t      a topic; repeat it, or comma-separate. an item can have many
+  --t      a topic; repeat it, or comma-separate. an item can have many.
+           with none, a new item goes to a topic named after you, so it is
+           never on everybody's board by accident
   --wait   (take) wait one sync, then answer CLAIMED · LOST to x
   --tag    sign as <name>/<tag>: one session of many (or KAPWA_TAG)
   --me     which of your keys: ~/.config/kapwa/keys/<name> (or KAPWA_ME)
@@ -264,9 +267,9 @@ pub async fn run(raw: Vec<String>) -> i32 {
     };
     // the command is the first bare word, wherever the flags sit; with none,
     // it's the board
-    const COMMANDS: [&str; 12] = [
-        "board", "say", "take", "drop", "done", "ask", "mine", "show", "prime", "protocol",
-        "whoami", "setup",
+    const COMMANDS: [&str; 14] = [
+        "board", "say", "take", "drop", "done", "ask", "mine", "show", "prime", "topics", "how",
+        "protocol", "whoami", "setup",
     ];
     let cmd_owned = match a.pos.first() {
         Some(c) if COMMANDS.contains(&c.as_str()) => a.pos.remove(0),
@@ -347,6 +350,7 @@ pub async fn run(raw: Vec<String>) -> i32 {
                 }
                 print!("{}", got?);
             }
+            ("topics", []) => print!("{}", node.get("/api/topics").await?),
             ("mine", []) => {
                 let out = node.get(&format!("/api/mine{}", scope(&a))).await?;
                 if as_json {
@@ -458,7 +462,29 @@ fn done(v: &Value, as_json: bool, word: &str) {
             "{}",
             json!({"id": v["id"], "by": v["event"]["by"], "item": v["item"]})
         );
+        return;
+    }
+    let id = v["id"].as_str().unwrap_or("");
+    let topics: Vec<&str> = v["item"]["topics"]
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let mine = v["event"]["by"]
+        .as_str()
+        .unwrap_or("")
+        .split('/')
+        .next()
+        .unwrap_or("");
+    let tags = if topics.is_empty() {
+        String::new()
     } else {
-        println!("{word} {}", v["id"].as_str().unwrap_or(""));
+        format!("  #{}", topics.join(" #"))
+    };
+    println!("{word} {id}{tags}");
+    // it was given nothing to go on, so the node put it where it was safe
+    if word == "said" && topics == [mine] {
+        println!(
+            "  (no topic given, so it went to your own. `kapwa topics` shows what is in use.)"
+        );
     }
 }

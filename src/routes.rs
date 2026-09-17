@@ -42,6 +42,11 @@ pub fn router(app: App) -> Router {
         .route("/api/item/:id", get(item))
         .route("/api/peers", get(peers))
         .route("/api/feed", get(feed))
+        .route("/api/day", get(day))
+        .route("/api/day.txt", get(day_txt))
+        .route("/api/stats", get(stats))
+        .route("/api/stats.txt", get(stats_txt))
+        .route("/api/topics", get(topics_in_use))
         .route("/api/live", get(live))
         .fallback(|| async {
             (
@@ -257,6 +262,15 @@ async fn event(State(app): State<App>, caller: Caller, Json(mut attrs): Json<Eve
             )
         }
     };
+    // A new item with no topic would land in the commons, where it is on
+    // everyone's board and in nobody's. So it goes to its author's own
+    // topic instead: a namespace you get by construction, and never a
+    // shared one you did not choose.
+    let new_item = !app.board.read().unwrap().items.contains_key(&id);
+    let untagged = crate::board::topics_of(&attrs).is_empty();
+    if new_item && untagged && verb(&kind) == Some("say") {
+        attrs.insert("t".into(), json!([crate::board::base(&who.name)]));
+    }
     attrs.insert("id".into(), Value::String(id.clone()));
     // `by` is the key's name (and session tag), never what the body claims
     attrs.insert("by".into(), Value::String(who.name.clone()));
@@ -283,11 +297,53 @@ struct Scope {
     t: Option<String>,
 }
 
+/// What to show this caller when they did not say. A key watches the topics
+/// it was given, and always its own: whatever it writes untagged lands
+/// there, so it never loses sight of its own work. A key with no topics
+/// listed watches everything.
 fn topics(q: &Scope, who: &Who) -> Vec<String> {
     match &q.t {
         Some(t) => t.split(',').filter_map(clean_topic).collect(),
-        None => who.topics.clone().unwrap_or_default(),
+        None => {
+            let mut t = who.topics.clone().unwrap_or_default();
+            if !t.is_empty() {
+                let own = crate::board::base(&who.name).to_string();
+                if !t.contains(&own) {
+                    t.push(own);
+                }
+            }
+            t
+        }
     }
+}
+
+/// Every topic in use, commonest first. An open vocabulary costs synonyms,
+/// and this is what keeps the bill down: look before you invent a word.
+async fn topics_in_use(State(app): State<App>, caller: Caller) -> Response {
+    if let Err(r) = caller.allow(&[Kind::Agent, Kind::User]) {
+        return r;
+    }
+    let st = app.board.read().unwrap();
+    let mut n: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
+    for i in st.items.values() {
+        for t in &i.topics {
+            let e = n.entry(t.clone()).or_default();
+            e.0 += 1;
+            if i.status != "done" {
+                e.1 += 1;
+            }
+        }
+    }
+    let mut rows: Vec<(String, usize, usize)> =
+        n.into_iter().map(|(t, (a, o))| (t, a, o)).collect();
+    rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    text(
+        rows.iter()
+            .map(|(t, all, open)| format!("  {:<18} {all:>3} items, {open} open", format!("#{t}")))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n",
+    )
 }
 
 async fn prime_txt(State(app): State<App>, caller: Caller, Query(q): Query<Scope>) -> Response {
@@ -308,6 +364,83 @@ async fn board_txt(State(app): State<App>, caller: Caller, Query(q): Query<Scope
             .map(|t| t.split(',').filter_map(clean_topic).collect())
             .unwrap_or_default();
     text(render::board(&app, &ts))
+}
+
+/// Asked for, never assumed: the whole board's day unless `t` narrows it,
+/// the same rule `board.txt` follows.
+fn asked_for(t: &Option<String>) -> Vec<String> {
+    t.as_deref()
+        .map(|t| t.split(',').filter_map(clean_topic).collect())
+        .unwrap_or_default()
+}
+
+#[derive(Deserialize)]
+struct DayQ {
+    /// `today` · `yesterday` · `2026-09-17`; absent means today
+    on: Option<String>,
+    t: Option<String>,
+}
+
+fn on_day(q: &DayQ) -> Result<chrono::NaiveDate, Response> {
+    let given = q.on.clone().unwrap_or_else(|| "today".into());
+    crate::day::parse_on(&given).ok_or_else(|| {
+        bad(
+            StatusCode::BAD_REQUEST,
+            &format!("`{given}` is not a day: today · yesterday · YYYY-MM-DD"),
+        )
+    })
+}
+
+async fn day(State(app): State<App>, caller: Caller, Query(q): Query<DayQ>) -> Response {
+    let who = match caller.allow(&[Kind::Agent, Kind::User]) {
+        Ok(w) => w.clone(),
+        Err(r) => return r,
+    };
+    let on = match on_day(&q) {
+        Ok(d) => d,
+        Err(r) => return r,
+    };
+    let st = app.board.read().unwrap().clone();
+    let steps = crate::day::day(&st, on, &who.name, &asked_for(&q.t));
+    Json(json!({"on": on.to_string(), "you": who.name, "steps": steps})).into_response()
+}
+
+async fn day_txt(State(app): State<App>, caller: Caller, Query(q): Query<DayQ>) -> Response {
+    let who = match caller.allow(&[Kind::Agent, Kind::User]) {
+        Ok(w) => w.clone(),
+        Err(r) => return r,
+    };
+    match on_day(&q) {
+        Ok(on) => text(render::day(&app, &who, on, &asked_for(&q.t))),
+        Err(r) => r,
+    }
+}
+
+#[derive(Deserialize)]
+struct StatsQ {
+    /// how far back to count; a week unless asked otherwise
+    days: Option<i64>,
+    t: Option<String>,
+}
+
+async fn stats(State(app): State<App>, caller: Caller, Query(q): Query<StatsQ>) -> Response {
+    if let Err(r) = caller.allow(&[Kind::Agent, Kind::User]) {
+        return r;
+    }
+    let st = app.board.read().unwrap().clone();
+    Json(crate::metrics::of(
+        &st,
+        q.days.unwrap_or(7),
+        &asked_for(&q.t),
+    ))
+    .into_response()
+}
+
+async fn stats_txt(State(app): State<App>, caller: Caller, Query(q): Query<StatsQ>) -> Response {
+    if let Err(r) = caller.allow(&[Kind::Agent, Kind::User]) {
+        return r;
+    }
+    text(render::stats(&app, q.days.unwrap_or(7), &asked_for(&q.t)))
 }
 
 async fn mine(State(app): State<App>, caller: Caller, Query(q): Query<Scope>) -> Response {

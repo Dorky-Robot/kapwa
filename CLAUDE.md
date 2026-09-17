@@ -16,23 +16,35 @@ participant. Coordination happens by leaving marks, not by sending messages.
    kita's. Moving bytes and real-time connections are another tool's. The test for
    any feature: is it about what we know, what we owe, or what we move? Only
    "owe" belongs here.
+
 2. **kapwa knows no sibling.** Other protocols ride it through two generic slots,
    `["ref", uri, word?]` and `["payload", type, string]`. Never put another
    project's name into the protocol, the tags or the code.
+
 3. **It is a protocol, not an app.** If it doesn't fit on the index card it is a
    convention, and nobody has to learn it. A second implementation in another
    language must stay an afternoon's work. Test vectors are the contract.
+
 4. **Keep it small.** Four verbs and `ask`. Unknown kinds and fields are kept, and
    ignored. No version negotiation, ever.
-5. **No domain nouns.** No person's name, product or business term in a status,
-   a field, a function or an example.
+
+5. **A topic, or your own.** A new item with no topic is filed under its
+   author's name. Nothing is global by accident, and `kapwa topics` exists so
+   an open vocabulary does not fill with synonyms: look before inventing a word.
+
 6. **Every writer owns one log.** Nobody writes anyone else's. Sync is by `seq`
    and two-way over one outbound connection, so a mesh needs one address.
    "Gateway" is a property (always on, reachable), never a role.
-7. **Fail closed.** Nothing is open but `/healthz` and the sign-in flow.
-8. **Measure, do not assert.** A claim about cost or scale comes with the script
+
+7. **No domain nouns.** No person's name, product or business term in a status,
+   a field, a function or an example.
+
+8. **Fail closed.** Nothing is open but `/healthz` and the sign-in flow.
+
+9. **Measure, do not assert.** A claim about cost or scale comes with the script
    that produced it.
-9. **Micro-commits.** One decision, one commit; the message carries what, why,
+
+10. **Micro-commits.** One decision, one commit; the message carries what, why,
    what was rejected. `diwa search kapwa "<topic>"` before non-trivial work.
 
 ## Layout

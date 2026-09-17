@@ -66,7 +66,11 @@ One JSON object per line.
 | `done` | `text?` | status = done |
 | `ask` | `text`, `to?` | status = asked; nothing moves until `to` (or, with no `to`, anyone but the asker) says something |
 
-`t` is a topic or a list of them; an item collects every topic its events carry.
+`t` is a topic or a list of them; an item collects every topic its events
+carry. **A new item with no topic is given one named after its author**, so
+nothing lands in a commons nobody chose; a key watches the topics it was given
+and always its own. `GET /api/topics` lists what is in use, which is what keeps
+an open vocabulary from filling with synonyms.
 `to` addresses a participant. `p` is `P0`–`P3`. A verb about an item this node
 has not seen is dropped by the fold, since its first `say` may be in a log that
 has not arrived yet.

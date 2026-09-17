@@ -4,6 +4,7 @@ use maud::{html, Markup, DOCTYPE};
 
 use crate::auth::Who;
 use crate::board::{is, Item, State};
+use crate::day::Step;
 use crate::puller::PeerStatus;
 use crate::App;
 
@@ -11,6 +12,8 @@ use crate::App;
 /// `/api/protocol`, so an agent meets them before it acts.
 pub const RULES: &str = "\
 rules  take before you work · say why
+       say it under a topic — untagged goes to your own,
+       where it is yours and nobody else's board
        ask only when a person must answer
        references, never secrets or records
        a take is provisional for a few seconds:
@@ -252,6 +255,98 @@ pub fn board(app: &App, topics: &[String]) -> String {
     out.join("\n") + "\n"
 }
 
+/// Clip a line so a long thing said does not wrap the whole path away.
+fn clip(s: &str, n: usize) -> String {
+    match s.char_indices().nth(n) {
+        Some((i, _)) => format!("{}…", &s[..i].trim_end()),
+        None => s.to_string(),
+    }
+}
+
+/// One step of the day, one line. `you` rather than your own name: the
+/// point of the path is telling your work from everyone else's at a glance.
+pub fn step_line(s: &Step) -> String {
+    let who = if s.mine { "you" } else { &s.by };
+    let what = match (&s.to, s.verb.as_str()) {
+        (Some(to), "ask") => format!("→ {to}: {}", s.what),
+        _ => s.what.clone(),
+    };
+    let tail = match (s.word.as_str(), &s.fold) {
+        ("missed", Some(f)) => format!(" ({f})"),
+        ("opened", _) if !s.topics.is_empty() => format!("  #{}", s.topics.join(" #")),
+        _ => String::new(),
+    };
+    format!(
+        "{:>5}  {:<15} {:<7} {:<8} {}{}",
+        s.clock,
+        clip(who, 15),
+        s.word,
+        s.id,
+        clip(&what, 96),
+        tail
+    )
+}
+
+/// The day as a path: everything anyone did, in the order it happened.
+///
+/// The board says where things stand and `recently` says what just moved.
+/// Neither answers the question a person asks when they sit down at a desk
+/// other people have been working at all day — what happened, and who did
+/// it — because that reading runs across items, forwards, in the hours a
+/// person actually lived.
+pub fn day(app: &App, who: &Who, on: chrono::NaiveDate, topics: &[String]) -> String {
+    let st = app.board.read().unwrap().clone();
+    let steps = crate::day::day(&st, on, &who.name, topics);
+    let mine = steps.iter().filter(|s| s.mine).count();
+    let hands = crate::day::hands(&steps).len();
+    let scope = if topics.is_empty() {
+        String::new()
+    } else {
+        format!(" · #{}", topics.join(" #"))
+    };
+    let mut out = vec![format!(
+        "the day · {}{scope} · {} step{} · {} yours · {} hand{}",
+        on.format("%a %-d %b"),
+        steps.len(),
+        if steps.len() == 1 { "" } else { "s" },
+        mine,
+        hands,
+        if hands == 1 { "" } else { "s" },
+    )];
+    if steps.is_empty() {
+        out.push(format!("\nnothing happened on {on}."));
+    } else {
+        out.push(String::new());
+        out.extend(steps.iter().map(|s| format!("  {}", step_line(s))));
+    }
+    out.push("\nmore: kapwa day --on <day> · kapwa stats · kapwa show <id>".into());
+    out.join("\n") + "\n"
+}
+
+/// How it went: where the work waited, counted from the same events.
+pub fn stats(app: &App, days: i64, topics: &[String]) -> String {
+    let st = app.board.read().unwrap().clone();
+    let m = crate::metrics::of(&st, days, topics);
+    let scope = if topics.is_empty() {
+        String::new()
+    } else {
+        format!(" · #{}", topics.join(" #"))
+    };
+    let mut out = vec![format!(
+        "how it went · {} day{} to {}{scope} · {} events",
+        m.days,
+        if m.days == 1 { "" } else { "s" },
+        chrono::Local::now().format("%a %-d %b"),
+        m.events,
+    )];
+    out.push(String::new());
+    for (label, value) in crate::metrics::rows(&m) {
+        out.push(format!("  {label:<11} {value}"));
+    }
+    out.push("\nmore: kapwa stats --days 30 · kapwa day · kapwa show <id>".into());
+    out.join("\n") + "\n"
+}
+
 /// What involves one participant: the narrow default scope.
 pub struct Mine {
     pub asked: Vec<Item>,
@@ -388,7 +483,24 @@ THE VERBS
   ask    someone must answer before this moves; --to names them
 
   An id is minted for you. Any unique prefix names an item, as with git.
-  `t` is a topic, or a list of them. An item can carry many.
+
+TOPICS, AND BEING A GOOD CITIZEN HERE
+  `t` is a topic, or a list of them; an item can carry many, and a topic is
+  how anyone decides whether a thing is theirs to read.
+
+  Say something with no topic and it goes to a topic named after you. That
+  is deliberate: what you write is then yours, findable, and on nobody
+  else's board. It is not a punishment — it is the default that does not
+  cost anyone else anything.
+
+  So before you invent a word, look at what is already in use:
+
+      kapwa topics
+
+  Use one that fits. Two people never choose the same keywords, which is why
+  the vocabulary is open; that only works if everybody looks first. Reach for
+  a shared topic when the thing genuinely belongs to others, and address a
+  participant with `--to` when it belongs to one of them.
 
 THE RULES
 {rules}

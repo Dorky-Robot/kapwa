@@ -110,7 +110,7 @@ pub fn clean_topic(t: &str) -> Option<String> {
     (!t.is_empty()).then_some(t)
 }
 
-fn topics_of(e: &Event) -> Vec<String> {
+pub fn topics_of(e: &Event) -> Vec<String> {
     match e.get("t") {
         Some(Value::Array(a)) => a
             .iter()
