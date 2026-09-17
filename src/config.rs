@@ -93,6 +93,11 @@ impl Config {
             }),
             _ => None,
         };
+        if let Some(o) = &oidc {
+            if o.client_id == o.client_secret {
+                anyhow::bail!("KAPWA_OIDC_CLIENT_SECRET is the same as the client id; paste the secret the identity provider showed when the client was created");
+            }
+        }
         let secret_key_base = env("KAPWA_SECRET_KEY_BASE");
         if oidc.is_some() && secret_key_base.is_none() {
             anyhow::bail!(

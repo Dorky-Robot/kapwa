@@ -30,6 +30,7 @@ pub fn router(app: App) -> Router {
         .route("/auth/login", get(oidc::login))
         .route("/auth/callback", get(oidc::callback))
         .route("/auth/logout", get(oidc::logout))
+        .route("/auth/bye", get(oidc::bye))
         .route("/api/writers", get(writers))
         .route("/api/log/:writer", get(log).post(offered))
         .route("/api/event", post(event))
@@ -596,6 +597,21 @@ mod tests {
             serde_json::from_str::<Value>(&mine).unwrap()["asked"][0]["id"],
             "plan"
         );
+    }
+
+    #[tokio::test]
+    async fn signing_out_lands_somewhere_that_does_not_sign_you_back_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = app(tmp.path());
+        let resp = router(app.clone())
+            .oneshot(get_req("/auth/logout", None))
+            .await
+            .unwrap();
+        assert!(resp.status().is_redirection());
+        assert_eq!(resp.headers()["location"], "/auth/bye");
+        let (st, body) = call(&app, get_req("/auth/bye", None)).await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(body.contains("Signed out") && body.contains("/auth/login"));
     }
 
     #[tokio::test]

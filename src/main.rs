@@ -31,6 +31,8 @@ pub struct Inner {
     pub board: RwLock<board::State>,
     pub peers: puller::Peers,
     pub oidc: RwLock<Option<Arc<openidconnect::core::CoreClient>>>,
+    /// where the identity provider ends *its* session, if it says
+    pub end_session: RwLock<Option<String>>,
     pub http: reqwest::Client,
     pub key: Key,
 }
@@ -73,6 +75,7 @@ impl App {
             board: RwLock::new(board::State::default()),
             peers: Arc::new(Mutex::new(Default::default())),
             oidc: RwLock::new(None),
+            end_session: RwLock::new(None),
             http: reqwest::Client::builder()
                 .user_agent(concat!("kapwa/", env!("CARGO_PKG_VERSION")))
                 .build()

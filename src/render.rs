@@ -277,6 +277,10 @@ pub fn page(app: &App, who: &Who) -> Markup {
                 style { (CSS) }
             }
             body {
+                div class="bar" {
+                    span { (who.name) }
+                    @if who.kind == crate::auth::Kind::User { a class="out" href="/auth/logout" { "Sign out" } }
+                }
                 h1 { (s.title) }
                 div class="meta" { "logs " (s.logs.join(" · ")) }
                 div class="meta" {
@@ -315,10 +319,7 @@ pub fn page(app: &App, who: &Who) -> Markup {
                         }
                     }
                 }
-                footer {
-                    "you: " (who.name) " (" (who.kind) ") · read-only · refreshes every 15s · "
-                    a href="/auth/logout" { "sign out" }
-                }
+                footer { "read-only · refreshes every 15s" }
             }
         }
     }
@@ -340,4 +341,6 @@ table{border-collapse:collapse;width:100%} td{padding:.2rem .5rem .2rem 0;vertic
 .id{white-space:nowrap} .pri{width:2rem} .who{white-space:nowrap}
 .st-asked{color:#c33} .st-taken{color:#27c} .st-open{color:#666}
 footer{margin-top:2rem;color:#888;font-size:.8rem}
+.bar{display:flex;justify-content:flex-end;gap:1rem;align-items:baseline;color:#888;margin-bottom:1rem}
+.out{color:#222;border:1px solid #ccc;border-radius:6px;padding:.15rem .6rem;text-decoration:none}.out:hover{border-color:#222}
 "#;

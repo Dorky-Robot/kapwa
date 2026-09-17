@@ -73,6 +73,18 @@ pub fn discover_in_background(app: App) {
             match discover(&cfg, &app.cfg.public_url).await {
                 Ok(client) => {
                     *app.oidc.write().unwrap() = Some(std::sync::Arc::new(client));
+                    // the provider's own sign-out, from its own metadata: never a
+                    // path we assume
+                    let meta = format!(
+                        "{}/.well-known/openid-configuration",
+                        cfg.issuer.trim_end_matches('/')
+                    );
+                    if let Ok(resp) = app.http.get(&meta).send().await {
+                        if let Ok(v) = resp.json::<serde_json::Value>().await {
+                            *app.end_session.write().unwrap() =
+                                v["end_session_endpoint"].as_str().map(String::from);
+                        }
+                    }
                     tracing::info!("oidc: discovered {}", cfg.issuer);
                     return;
                 }
@@ -192,7 +204,19 @@ async fn finish(app: &App, jar: &PrivateCookieJar, back: Returned) -> Result<Ses
         .set_pkce_verifier(PkceCodeVerifier::new(pending.verifier))
         .request_async(async_http_client)
         .await
-        .context("could not trade the code for tokens")?;
+        .map_err(|e| {
+            // the provider's own words go to the log (never to the browser):
+            // "invalid client secret" and "code already used" need different fixes
+            let why = match &e {
+                openidconnect::RequestTokenError::ServerResponse(r) => format!("{r:?}"),
+                openidconnect::RequestTokenError::Parse(_, body) => {
+                    String::from_utf8_lossy(body).chars().take(300).collect()
+                }
+                other => other.to_string(),
+            };
+            tracing::warn!("token endpoint refused: {why}");
+            anyhow::anyhow!("could not trade the code for tokens")
+        })?;
     let id_token = tokens.id_token().context("no id token in the response")?;
     let claims = id_token
         .claims(&client.id_token_verifier(), &Nonce::new(pending.nonce))
@@ -214,8 +238,41 @@ async fn finish(app: &App, jar: &PrivateCookieJar, back: Returned) -> Result<Ses
     })
 }
 
+/// Sign out of kapwa, and land somewhere that does not sign you back in.
+/// Going to `/` would bounce to the provider, which still has its own
+/// session and would return you silently: a logout that does nothing.
 pub async fn logout(jar: PrivateCookieJar) -> impl IntoResponse {
-    (jar.remove(Cookie::from(SESSION)), Redirect::to("/"))
+    (jar.remove(Cookie::from(SESSION)), Redirect::to("/auth/bye"))
+}
+
+pub async fn bye(State(app): State<App>) -> Response {
+    let issuer = app.cfg.oidc.as_ref().map(|o| o.issuer.clone());
+    let end = app.end_session.read().unwrap().clone();
+    axum::response::Html(
+        maud::html! {
+            (maud::DOCTYPE)
+            html lang="en" {
+                head {
+                    meta charset="utf-8";
+                    meta name="viewport" content="width=device-width,initial-scale=1";
+                    title { "kapwa · signed out" }
+                    style { "body{font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:4rem auto;max-width:34rem;padding:0 1rem;color:#222;background:#fafafa}a{color:#27c}p.dim{color:#888}" }
+                }
+                body {
+                    h1 style="font-size:1.1rem" { "Signed out of kapwa." }
+                    p { a href="/auth/login" { "Sign in again" } }
+                    @if let (Some(end), Some(issuer)) = (&end, &issuer) {
+                        p class="dim" {
+                            "You are still signed in at " (issuer.trim_start_matches("https://")) ", so signing in again won't ask for your passkey. "
+                            a href=(end) { "Sign out there too" } "."
+                        }
+                    }
+                }
+            }
+        }
+        .into_string(),
+    )
+    .into_response()
 }
 
 fn crumb(app: &App, name: &'static str, value: String, secs: i64) -> Cookie<'static> {
