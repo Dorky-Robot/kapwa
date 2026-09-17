@@ -11,7 +11,7 @@ use std::hash::{Hash, Hasher};
 
 use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
-use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -25,8 +25,7 @@ use crate::{oidc, render, App};
 pub fn router(app: App) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
-        .route("/how", get(how))
-        .route("/api/protocol", get(how))
+        .route("/api/protocol", get(protocol))
         .route("/", get(dashboard))
         .route("/auth/login", get(oidc::login))
         .route("/auth/callback", get(oidc::callback))
@@ -45,7 +44,7 @@ pub fn router(app: App) -> Router {
         .fallback(|| async {
             (
                 StatusCode::NOT_FOUND,
-                Json(json!({"error":"no route; GET /how says how this works"})),
+                Json(json!({"error":"no route; GET / says how this works"})),
             )
         })
         .layer(tower_http::trace::TraceLayer::new_for_http())
@@ -66,23 +65,37 @@ async fn healthz(State(app): State<App>) -> Json<Value> {
     Json(json!({"ok": true, "writer": app.cfg.writer}))
 }
 
-/// The front door. Open on purpose: it holds instructions, not content, and
-/// anything that finds the URL should be able to learn the rest from it.
-async fn how(State(app): State<App>) -> Response {
-    text(render::how(&app))
+/// The same instructions, at a path an agent can guess. Open on purpose: it
+/// holds instructions, not content.
+async fn protocol(State(app): State<App>) -> Response {
+    text(render::how(&app, false))
 }
 
 // ── the board: people, read-only ───────────────────────────────────
 
-async fn dashboard(State(app): State<App>, caller: Caller) -> Response {
-    match &caller.0 {
-        Some(who) => Html(render::page(&app, who).into_string()).into_response(),
-        None if app.cfg.oidc.is_some() => Redirect::to("/auth/login").into_response(),
-        None => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "no sign-in configured here (KAPWA_OIDC_*); agents: GET /api/protocol",
-        )
-            .into_response(),
+/// The root is the front door, and what it serves depends on who knocked.
+///
+/// Signed in, or holding a key: the board. Otherwise the instructions — as a
+/// page for a browser, as plain text for everything else. It deliberately
+/// does not bounce a stranger to the identity provider: a passkey page is no
+/// use to an agent, and a person who has never been here deserves to be told
+/// what this is before being asked who they are.
+async fn dashboard(
+    State(app): State<App>,
+    caller: Caller,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    if let Some(who) = &caller.0 {
+        return Html(render::page(&app, who).into_string()).into_response();
+    }
+    let wants_html = headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|a| a.contains("text/html"));
+    if wants_html {
+        Html(render::front_door(&app, app.cfg.oidc.is_some()).into_string()).into_response()
+    } else {
+        text(render::how(&app, false))
     }
 }
 
@@ -386,12 +399,17 @@ mod tests {
             call(&app, get_req("/healthz", None)).await.0,
             StatusCode::OK
         );
-        for p in ["/how", "/api/protocol"] {
+        // the root and its alias hand a stranger the whole manual
+        for p in ["/", "/api/protocol"] {
             let (st, body) = call(&app, get_req(p, None)).await;
             assert_eq!(st, StatusCode::OK, "{p}");
             assert!(
                 body.contains("say") && body.contains("take") && body.contains("/api/event"),
                 "{p}"
+            );
+            assert!(
+                body.contains("ask them for these"),
+                "{p} must say what needs a person"
             );
         }
         for p in [
@@ -621,15 +639,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_board_is_503_not_open_without_sign_in_but_renders_for_a_key() {
+    async fn the_root_is_the_board_for_a_key_and_the_manual_for_a_stranger() {
         let tmp = tempfile::tempdir().unwrap();
         let app = app(tmp.path());
-        assert_eq!(
-            call(&app, get_req("/", None)).await.0,
-            StatusCode::SERVICE_UNAVAILABLE
-        );
+        // a key: the board
         let (st, body) = call(&app, get_req("/", Some("claude-key"))).await;
         assert_eq!(st, StatusCode::OK);
         assert!(body.contains("read-only"));
+        // a browser: a page that says what this is, never a bounce to sign-in
+        let req = Request::get("/")
+            .header("accept", "text/html,application/xhtml+xml")
+            .body(Body::empty())
+            .unwrap();
+        let (st, body) = call(&app, req).await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(body.contains("<pre>") && body.contains("If you are an agent"));
+        // anything else: the text itself
+        let req = Request::get("/")
+            .header("accept", "*/*")
+            .body(Body::empty())
+            .unwrap();
+        let (st, body) = call(&app, req).await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(body.starts_with("kapwa ·"));
     }
 }

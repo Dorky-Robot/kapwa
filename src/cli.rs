@@ -171,8 +171,11 @@ impl Node {
     }
 
     async fn get(&self, path: &str) -> Result<String, Fail> {
-        self.send(self.http.get(format!("{}{path}", self.url)), path == "/how")
-            .await
+        self.send(
+            self.http.get(format!("{}{path}", self.url)),
+            path == "/api/protocol",
+        )
+        .await
     }
 
     async fn event(&self, body: Value) -> Result<Value, Fail> {
@@ -320,7 +323,7 @@ pub async fn run(raw: Vec<String>) -> i32 {
     let result: Result<i32, Fail> = async {
         match (cmd, a.pos.as_slice()) {
             ("board", []) => print!("{}", node.get(&format!("/api/board.txt{}", scope(&a))).await?),
-            ("how" | "protocol", []) => print!("{}", node.get("/how").await?),
+            ("how" | "protocol", []) => print!("{}", node.get("/api/protocol").await?),
             ("whoami", []) => println!("{}", node.get("/api/whoami").await?),
             ("prime", []) => {
                 let got = node.get(&format!("/api/prime.txt{}", scope(&a))).await;

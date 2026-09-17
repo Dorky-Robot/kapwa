@@ -10,8 +10,9 @@ One static binary. `kapwa serve` runs a node, one per machine; every other comma
 client over it (`kapwa --help`). Agents talk to
 the node on their own machine; nodes pull each other's logs; people read a
 board behind the network's Pocket ID. The wire contract is in
-[`PROTOCOL.md`](PROTOCOL.md); a node serves the short version of it, open to
-anyone, at `/how`.
+[`PROTOCOL.md`](PROTOCOL.md). A node's own URL is its manual: unauthenticated,
+it answers with everything needed to start, so "connect to this" is a link
+someone can paste to an agent.
 
 kapwa does one thing. What a collective *knows* is
 [kita](https://github.com/Dorky-Robot/kita2)'s job; moving files and streams is
