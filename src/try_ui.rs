@@ -21,6 +21,9 @@ pub struct Party {
     pub holds: usize,
     pub asked_of: usize,
     pub topics: Vec<String>,
+    /// what they are holding, newest first: the answer to "and what is that
+    /// one doing?", which a name alone never gives
+    pub doing: Vec<(String, String)>,
 }
 
 /// A directed act: who did something that was about somebody else's work,
@@ -123,6 +126,7 @@ pub fn parties(app: &App) -> Vec<Party> {
             holds: 0,
             asked_of: 0,
             topics: vec![],
+            doing: vec![],
         });
         if at > p.last.as_str() {
             p.last = at.to_string();
@@ -146,6 +150,7 @@ pub fn parties(app: &App) -> Vec<Party> {
         if i.status != "done" {
             if let Some(p) = acc.get_mut(&i.owner) {
                 p.holds += 1;
+                p.doing.push((i.updated_at.clone(), i.title.clone()));
             }
             if i.status == "asked" {
                 if let Some(p) = acc.get_mut(&i.asked_of) {
@@ -155,8 +160,17 @@ pub fn parties(app: &App) -> Vec<Party> {
         }
     }
     let mut v: Vec<Party> = acc.into_values().collect();
+    for p in &mut v {
+        p.doing.sort_by(|a, b| b.0.cmp(&a.0));
+    }
     v.sort_by(|a, b| b.last.cmp(&a.last));
     v
+}
+
+/// `claude/kapwa-a3` reads as "kapwa-a3, one of claude's". Show the part
+/// that distinguishes, and keep the key for when it matters.
+fn short(name: &str) -> &str {
+    name.split('/').nth(1).unwrap_or(name)
 }
 
 /// A stable colour per participant: same name, same hue, every reload and
@@ -242,10 +256,19 @@ fn ring(app: &App) -> Markup {
                 @let (x, y) = at(i);
                 g class="node" {
                     circle cx=(x) cy=(y) r=(7.0 + (p.said as f64).min(9.0)) style={ "fill:hsl(" (hue(&p.name)) " 70% 55%)" } {
-                        title { (p.name) " · " (p.said) " acts · last " (ago(&p.last)) " ago" }
+                        title {
+                            (p.name) " · " (p.said) " acts · last " (ago(&p.last)) " ago"
+                            @for (_, t) in p.doing.iter().take(3) { "\nholding: " (t) }
+                        }
                     }
                     @if p.holds > 0 { circle cx=(x) cy=(y) r=(13.0 + (p.said as f64).min(9.0)) class="ring" {} }
-                    text x=(x) y=(y + 28.0) text-anchor="middle" class="lbl" { (p.name) }
+                    text x=(x) y=(y + 26.0) text-anchor="middle" class="lbl" { (short(&p.name)) }
+                    @if p.name.contains('/') {
+                        text x=(x) y=(y + 38.0) text-anchor="middle" class="lbl faint" { (base(&p.name)) }
+                    }
+                    @if let Some((_, t)) = p.doing.first() {
+                        text x=(x) y=(y + (if p.name.contains('/') { 50.0 } else { 38.0 })) text-anchor="middle" class="lbl doing" { (clip(t, 22)) }
+                    }
                 }
             }
             @if parties.is_empty() {
@@ -268,6 +291,9 @@ fn lanes(app: &App) -> Markup {
                     (ago(&p.last)) " ago · " (p.said) " acts"
                     @if p.holds > 0 { " · holds " (p.holds) }
                     @if p.asked_of > 0 { span class="wait" { " · waiting on them " (p.asked_of) } }
+                }
+                @for (_, t) in p.doing.iter().take(2) {
+                    div class="doing" { "↳ " (clip(t, 44)) }
                 }
                 @if !p.topics.is_empty() {
                     div class="ltopics dim" { @for t in p.topics.iter().take(4) { span class="t" { "#" (t) } } }
@@ -401,6 +427,14 @@ pub fn rail(app: &App) -> Markup {
     )
 }
 
+fn clip(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        s.chars().take(n - 1).collect::<String>() + "…"
+    }
+}
+
 fn fade(at: &str) -> f64 {
     chrono::DateTime::parse_from_rfc3339(at)
         .map(|t| {
@@ -432,7 +466,9 @@ main{padding:1rem}
 .cons path.hot{animation:pulse 1.6s ease-out}
 @keyframes pulse{from{opacity:1;stroke-width:6}to{opacity:.5}}
 .cons .ring{fill:none;stroke:#fff;stroke-opacity:.25}
-.cons .lbl{fill:var(--dim);font:11px ui-monospace,Menlo,monospace}
+.cons .lbl{fill:var(--ink);font:11px ui-monospace,Menlo,monospace}
+.cons .faint{fill:var(--dim);font-size:9.5px}
+.cons .doing{fill:var(--dim);font-size:9.5px;font-style:italic}
 .legend{padding:.5rem .9rem;border-top:1px solid var(--line);font-size:.75rem}
 ul{list-style:none;margin:0;padding:0}
 .edges li,.rail li{display:flex;gap:.45rem;align-items:baseline;padding:.4rem .9rem;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden}
@@ -445,7 +481,8 @@ ul{list-style:none;margin:0;padding:0}
 .lanes{padding-bottom:.4rem}
 .lane{padding:.5rem .9rem;border-left:3px solid var(--line);margin:.4rem .5rem}
 .lname{display:flex;gap:.45rem;align-items:center}
-.lmeta,.ltopics{font-size:.75rem}.wait{color:#ff7b72}.t{margin-right:.4rem}
+.lmeta,.ltopics{font-size:.75rem}
+.doing{font-size:.75rem;color:#9aa4ad;padding-left:.2rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wait{color:#ff7b72}.t{margin-right:.4rem}
 .wrap{max-width:52rem;margin:0 auto}
 .prose h1{font-size:1.2rem}.prose p{color:#c9ced3}
 .cards{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:1.5rem 0}

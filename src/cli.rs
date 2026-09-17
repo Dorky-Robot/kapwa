@@ -40,7 +40,9 @@ kapwa — what participants owe each other
            with none, a new item goes to a topic named after you, so it is
            never on everybody's board by accident
   --wait   (take) wait one sync, then answer CLAIMED · LOST to x
-  --tag    sign as <name>/<tag>: one session of many (or KAPWA_TAG)
+  --tag    sign as <name>/<tag>: one session of many (or KAPWA_TAG).
+           call yourself something a person can read — `--tag dashboard`
+           beats a hash. the hook names you after where you are working
   --me     which of your keys: ~/.config/kapwa/keys/<name> (or KAPWA_ME)
   --on     (day) today · yesterday · 2026-09-17
   --days   (stats) how far back to count; a week by default
@@ -216,6 +218,47 @@ fn query(pairs: &[(&str, Option<String>)]) -> String {
     }
 }
 
+/// A name a person can read at a glance. Hex says nothing: `claude/6a26af`
+/// could be anybody. Where a session is working usually says what it is
+/// doing, so that leads — `claude/kapwa-a3` — with just enough of the
+/// session id after it that two sessions in one place stay two.
+fn tag_for(cwd: Option<&str>, session: Option<&str>) -> Option<String> {
+    let short: String = session
+        .unwrap_or_default()
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(3)
+        .collect();
+    let place = cwd
+        .and_then(|p| p.rsplit('/').find(|s| !s.is_empty()))
+        .map(|s| {
+            s.chars()
+                .map(|ch| {
+                    if ch.is_ascii_alphanumeric() {
+                        ch.to_ascii_lowercase()
+                    } else {
+                        '-'
+                    }
+                })
+                .collect::<String>()
+        })
+        .map(|s| s.trim_matches('-').to_string())
+        .filter(|s| {
+            !s.is_empty()
+                && s.len() <= 20
+                && !matches!(
+                    s.as_str(),
+                    "felixflores" | "home" | "users" | "tmp" | "projects"
+                )
+        });
+    match (place, short.is_empty()) {
+        (Some(p), false) => Some(format!("{p}-{short}")),
+        (Some(p), true) => Some(p),
+        (None, false) => Some(short),
+        (None, true) => None,
+    }
+}
+
 fn scope(a: &Args) -> String {
     if a.t.is_empty() {
         String::new()
@@ -313,16 +356,8 @@ pub async fn run(raw: Vec<String>) -> i32 {
     {
         let mut buf = String::new();
         let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf);
-        if let Some(sid) = serde_json::from_str::<Value>(&buf)
-            .ok()
-            .and_then(|v| v["session_id"].as_str().map(String::from))
-        {
-            let tag: String = sid
-                .chars()
-                .filter(|c| c.is_ascii_alphanumeric())
-                .take(6)
-                .collect();
-            if !tag.is_empty() {
+        if let Ok(v) = serde_json::from_str::<Value>(&buf) {
+            if let Some(tag) = tag_for(v["cwd"].as_str(), v["session_id"].as_str()) {
                 a.tag = Some(tag.clone());
                 hook_tag = Some(tag);
             }
@@ -349,7 +384,21 @@ pub async fn run(raw: Vec<String>) -> i32 {
         match (cmd, a.pos.as_slice()) {
             ("board", []) => print!("{}", node.get(&format!("/api/board.txt{}", scope(&a))).await?),
             ("how" | "protocol", []) => print!("{}", node.get("/api/protocol").await?),
-            ("whoami", []) => println!("{}", node.get("/api/whoami").await?),
+            ("whoami", []) => {
+                let out = node.get("/api/whoami").await?;
+                if as_json {
+                    println!("{out}");
+                } else {
+                    let v: Value = serde_json::from_str(&out).unwrap_or_default();
+                    println!("{}", v["name"].as_str().unwrap_or("?"));
+                    match &node.tag {
+                        Some(t) => println!("  signing as one session of {} · --tag {t}", v["name"].as_str().unwrap_or("").split('/').next().unwrap_or("")),
+                        None => println!("  no tag: every session of this key looks like one. --tag <name> to be yourself"),
+                    }
+                    let topics: Vec<&str> = v["topics"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+                    println!("  watching {}", if topics.is_empty() { "everything".to_string() } else { format!("#{}", topics.join(" #")) });
+                }
+            }
             ("prime", []) => {
                 let got = node.get(&format!("/api/prime.txt{}", scope(&a))).await;
                 if a.hook {
@@ -357,7 +406,9 @@ pub async fn run(raw: Vec<String>) -> i32 {
                     // nothing rather than fail
                     if let Ok(mut text) = got {
                         if let Some(tag) = &hook_tag {
-                            text += &format!("\nthis session signs with --tag {tag} (add it to every kapwa command, or export KAPWA_TAG={tag})\n");
+                            text += &format!(
+                                "\nyou are {tag} here: pass --tag {tag} to every kapwa command, or export KAPWA_TAG={tag} once.\nthe name is yours to choose — anything short and human (--tag dashboard) is better than the default.\n"
+                            );
                             // some harnesses let a start hook set the session's environment
                             if let Ok(f) = std::env::var("CLAUDE_ENV_FILE") {
                                 use std::io::Write;
