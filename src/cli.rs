@@ -32,6 +32,10 @@ kapwa — what participants owe each other
   kapwa how                 how this works, for someone new (open to anyone)
   kapwa whoami
 
+  kapwa join [name]         get a key of your own on this machine
+  kapwa join --with <invite>   …or from anywhere, on an invitation
+  kapwa invite <name>       vouch for someone (a lead only) [--role] [--t] [--hours]
+
   kapwa serve               run this machine's node
   kapwa setup claude        print the hook that primes every session
 
@@ -74,6 +78,9 @@ struct Args {
     json: bool,
     wait: bool,
     hook: bool,
+    with: Option<String>,
+    role: Option<String>,
+    hours: Option<i64>,
 }
 
 fn parse(raw: &[String]) -> Result<Args, String> {
@@ -93,6 +100,15 @@ fn parse(raw: &[String]) -> Result<Args, String> {
             "--json" => a.json = true,
             "--wait" => a.wait = true,
             "--hook" => a.hook = true,
+            "--with" => a.with = Some(val("--with")?),
+            "--role" => a.role = Some(val("--role")?),
+            "--hours" => {
+                a.hours = Some(
+                    val("--hours")?
+                        .parse()
+                        .map_err(|_| "--hours wants a number".to_string())?,
+                )
+            }
             "-m" => a.pos.push(val("-m")?),
             f if f.starts_with("--") => return Err(format!("unknown flag {f}")),
             _ => a.pos.push(x.clone()),
@@ -102,8 +118,8 @@ fn parse(raw: &[String]) -> Result<Args, String> {
 }
 
 struct Node {
-    http: reqwest::Client,
-    url: String,
+    pub http: reqwest::Client,
+    pub url: String,
     key: Option<String>,
     tag: Option<String>,
 }
@@ -149,7 +165,7 @@ impl Node {
         }
     }
 
-    async fn send(&self, req: reqwest::RequestBuilder, open: bool) -> Result<String, Fail> {
+    pub async fn send(&self, req: reqwest::RequestBuilder, open: bool) -> Result<String, Fail> {
         let mut req = req.timeout(Duration::from_secs(15));
         if !open {
             let Some(k) = &self.key else {
@@ -332,9 +348,9 @@ pub async fn run(raw: Vec<String>) -> i32 {
     };
     // the command is the first bare word, wherever the flags sit; with none,
     // it's the board
-    const COMMANDS: [&str; 16] = [
+    const COMMANDS: [&str; 18] = [
         "board", "say", "take", "drop", "done", "ask", "mine", "show", "prime", "day", "stats",
-        "topics", "how", "protocol", "whoami", "setup",
+        "topics", "how", "protocol", "whoami", "setup", "join", "invite",
     ];
     let cmd_owned = match a.pos.first() {
         Some(c) if COMMANDS.contains(&c.as_str()) => a.pos.remove(0),
@@ -424,6 +440,82 @@ pub async fn run(raw: Vec<String>) -> i32 {
                 print!("{}", got?);
             }
             ("topics", []) => print!("{}", node.get("/api/topics").await?),
+            ("join", rest) if rest.len() <= 1 => {
+                let mut body = json!({});
+                if let Some(t) = &a.with {
+                    body["invite"] = json!(t);
+                } else {
+                    // the proof that we are on this machine is a file only
+                    // this machine's user can read; if it is not there, we
+                    // are not, and an invitation is the way in
+                    let p = crate::config::home().join(".config/kapwa/enroll");
+                    let Ok(s) = std::fs::read_to_string(&p) else {
+                        return Err(Fail::Who(format!(
+                            "not on the node's machine (no {}). ask someone here to run `kapwa invite <name>` \
+                             and redeem it with `kapwa join --with <invite> --url <node>`",
+                            p.display()
+                        )));
+                    };
+                    body["secret"] = json!(s.trim());
+                }
+                if let Some(n) = rest.first() {
+                    body["name"] = json!(n);
+                }
+                if let Some(r) = &a.role {
+                    body["role"] = json!(r);
+                }
+                if !a.t.is_empty() {
+                    body["t"] = json!(a.t.join(","));
+                }
+                let out = node.send(node.http.post(format!("{}/api/join", node.url)).json(&body), true).await?;
+                let v: Value = serde_json::from_str(&out).map_err(|e| Fail::No(e.to_string()))?;
+                let (name, key) = (v["name"].as_str().unwrap_or(""), v["key"].as_str().unwrap_or(""));
+                // a key is only ever known once: write it down before saying so
+                let path = crate::config::home().join(format!(".config/kapwa/keys/{name}"));
+                let saved = std::fs::create_dir_all(path.parent().unwrap())
+                    .and_then(|_| std::fs::write(&path, format!("{key}\n")))
+                    .and_then(|_| {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+                        }
+                        Ok(())
+                    })
+                    .is_ok();
+                if as_json {
+                    println!("{}", json!({"name": name, "key": key, "saved": saved.then(|| path.display().to_string())}));
+                } else if saved {
+                    println!("you are {name} · key saved to {}", path.display());
+                    println!("  use it with:  kapwa --me {name} whoami   (or export KAPWA_ME={name})");
+                } else {
+                    println!("you are {name} · key: {key}");
+                    println!("  nowhere to save it here — keep it: export KAPWA_KEY={key}");
+                }
+            }
+            ("invite", [name]) => {
+                let mut body = json!({"name": name});
+                if let Some(r) = &a.role {
+                    body["role"] = json!(r);
+                }
+                if !a.t.is_empty() {
+                    body["t"] = json!(a.t.join(","));
+                }
+                if let Some(h) = a.hours {
+                    body["hours"] = json!(h);
+                }
+                let out = node.send(node.http.post(format!("{}/api/invite", node.url)).json(&body), false).await?;
+                let v: Value = serde_json::from_str(&out).map_err(|e| Fail::No(e.to_string()))?;
+                if as_json {
+                    println!("{out}");
+                } else {
+                    println!("invitation for {} · {} · watching {} · good until {}",
+                        v["name"].as_str().unwrap_or(""), v["role"].as_str().unwrap_or(""),
+                        v["topics"].as_str().unwrap_or(""), v["until"].as_str().unwrap_or(""));
+                    println!("  one use. give them this line:");
+                    println!("    kapwa join --with {} --url {}", v["invite"].as_str().unwrap_or(""), node.url);
+                }
+            }
             // a day can be named where the command wants it, so
             // `kapwa day yesterday` reads as well as `--on yesterday`
             ("day", rest) | ("stats", rest) if rest.len() < 2 => {
@@ -528,7 +620,7 @@ pub async fn run(raw: Vec<String>) -> i32 {
             ("setup", [what]) if what == "claude" => {
                 println!("# add to ~/.claude/settings.json (merge with any hooks you have).\n# it puts `kapwa prime` into every session at start, on resume, and\n# again after compaction, so the board survives long sessions.\n{SETUP_CLAUDE}");
             }
-            ("say" | "take" | "drop" | "done" | "ask" | "show" | "setup", _) => return Ok(usage(&format!("`{cmd}` wants different arguments"))),
+            ("say" | "take" | "drop" | "done" | "ask" | "show" | "setup" | "join" | "invite", _) => return Ok(usage(&format!("`{cmd}` wants different arguments"))),
             (other, _) => return Ok(usage(&format!("unknown command `{other}`"))),
         }
         Ok(0)

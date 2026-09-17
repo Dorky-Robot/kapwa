@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use crate::auth::{Caller, Kind, Who};
 use crate::board::{clean_topic, verb};
 use crate::log::Event;
-use crate::{oidc, render, try_ui, App};
+use crate::{join as enrol, oidc, render, try_ui, App};
 
 pub fn router(app: App) -> Router {
     Router::new()
@@ -34,6 +34,8 @@ pub fn router(app: App) -> Router {
         .route("/api/writers", get(writers))
         .route("/api/log/:writer", get(log).post(offered))
         .route("/api/event", post(event))
+        .route("/api/join", post(join))
+        .route("/api/invite", post(invite))
         .route("/api/whoami", get(whoami))
         .route("/api/prime.txt", get(prime_txt))
         .route("/api/board.txt", get(board_txt))
@@ -184,6 +186,135 @@ async fn offered(
         )
             .into_response(),
     }
+}
+
+// ── getting a key ──────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct Joining {
+    name: Option<String>,
+    /// the file only this machine's user can read
+    secret: Option<String>,
+    /// or an invitation somebody here minted
+    invite: Option<String>,
+    role: Option<String>,
+    t: Option<String>,
+}
+
+/// Two ways in and no third: prove you are on the machine, or spend an
+/// invitation. Refusals say which, because an agent that cannot tell "I am
+/// a stranger" from "that name is taken" will retry the wrong thing.
+async fn join(State(app): State<App>, Json(j): Json<Joining>) -> Response {
+    let local = j
+        .secret
+        .as_deref()
+        .is_some_and(|s| enrol::is_local(&app.cfg, s));
+    let invited = (!local)
+        .then(|| j.invite.as_deref().and_then(|t| enrol::redeem(&app.cfg, t)))
+        .flatten();
+    if !local && invited.is_none() {
+        return bad(
+            StatusCode::FORBIDDEN,
+            "a key cannot be asked for: on this machine, send the contents of ~/.config/kapwa/enroll; \
+             from anywhere else, an invitation somebody here minted. GET / says how",
+        );
+    }
+    let name = invited
+        .as_ref()
+        .map(|i| i.name.clone())
+        .filter(|n| !n.is_empty())
+        .or(j.name)
+        .unwrap_or_default();
+    if !crate::log::valid_name(&name) || name.contains('/') {
+        return bad(
+            StatusCode::BAD_REQUEST,
+            "pick a name: letters, digits, - . _ @, and no /",
+        );
+    }
+    if enrol::taken(&app.cfg, &name) {
+        // the invitation is already spent by here, which is the safe way
+        // round: a name it cannot have is not a reason to hand it back
+        return bad(
+            StatusCode::CONFLICT,
+            &format!("`{name}` is taken here; choose another"),
+        );
+    }
+    // an invitation fixes what it grants at the moment of vouching
+    let (role, topics) = match &invited {
+        Some(i) => (i.role.clone(), i.topics.clone()),
+        None => (
+            j.role
+                .filter(|r| ["worker", "lead"].contains(&r.as_str()))
+                .unwrap_or_else(|| "worker".into()),
+            j.t.unwrap_or_else(|| "*".into()),
+        ),
+    };
+    match enrol::add_key(&app.cfg, &name, &role, &topics) {
+        Ok(token) => {
+            // say so on the board: joining is not a private act
+            let how = match &invited {
+                Some(_) => "on an invitation".to_string(),
+                None => format!("from {}", app.cfg.writer),
+            };
+            let _ = app.logs.append_own(
+                serde_json::from_value(json!({
+                    "kind": "say",
+                    "id": format!("joined-{name}"),
+                    "text": format!("{name} joined {how}, as {role}, watching {topics}"),
+                    "t": ["kapwa"],
+                }))
+                .unwrap_or_default(),
+            );
+            app.refresh_board();
+            Json(json!({"ok": true, "name": name, "key": token, "role": role, "topics": topics}))
+                .into_response()
+        }
+        Err(e) => bad(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+struct Inviting {
+    name: String,
+    role: Option<String>,
+    t: Option<String>,
+    hours: Option<i64>,
+}
+
+/// Vouching is an act with a name on it, so it needs a key, and only a
+/// lead's: a worker cannot widen the circle it was let into.
+async fn invite(State(app): State<App>, caller: Caller, Json(i): Json<Inviting>) -> Response {
+    let who = match caller.allow(&[Kind::Agent]) {
+        Ok(w) => w.clone(),
+        Err(r) => return r,
+    };
+    if who.role.as_deref() != Some("lead") {
+        return bad(
+            StatusCode::FORBIDDEN,
+            "only a lead may invite; ask one to vouch for you",
+        );
+    }
+    if !crate::log::valid_name(&i.name) || i.name.contains('/') {
+        return bad(
+            StatusCode::BAD_REQUEST,
+            "pick a name: letters, digits, - . _ @, and no /",
+        );
+    }
+    if enrol::taken(&app.cfg, &i.name) {
+        return bad(StatusCode::CONFLICT, &format!("`{}` is taken here", i.name));
+    }
+    let role = i
+        .role
+        .filter(|r| ["worker", "lead"].contains(&r.as_str()))
+        .unwrap_or_else(|| "worker".into());
+    let inv = enrol::mint_invite(
+        &app.cfg,
+        &i.name,
+        &role,
+        i.t.as_deref().unwrap_or("*"),
+        i.hours.unwrap_or(24),
+    );
+    Json(json!({"ok": true, "invite": inv.token, "name": inv.name, "role": inv.role, "topics": inv.topics, "until": inv.until, "by": who.name})).into_response()
 }
 
 // ── agents ─────────────────────────────────────────────────────────
@@ -626,9 +757,11 @@ mod tests {
                 body.contains("say") && body.contains("take") && body.contains("/api/event"),
                 "{p}"
             );
+            // it teaches how to get in, and never lets anyone in
+            assert!(body.contains("cannot be asked for"), "{p}");
             assert!(
-                body.contains("ask them for these"),
-                "{p} must say what needs a person"
+                body.contains("kapwa join") && body.contains("invite"),
+                "{p}"
             );
         }
         for p in [
@@ -713,6 +846,109 @@ mod tests {
                 .await
                 .0,
             StatusCode::FORBIDDEN
+        );
+    }
+
+    /// The whole point of the front door being open: it explains the way in
+    /// without being one. A stranger who finds the URL learns how the mesh
+    /// works and still cannot join it.
+    #[tokio::test]
+    async fn a_stranger_cannot_ask_for_a_key_and_a_worker_cannot_vouch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = app(tmp.path());
+        let post_open = |body: Value| {
+            Request::post("/api/join")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        for body in [
+            json!({"name": "intruder"}),
+            json!({"name": "intruder", "secret": "guess"}),
+            json!({"invite": "made-up"}),
+            json!({"name": "intruder", "secret": ""}),
+        ] {
+            let (st, out) = call(&app, post_open(body.clone())).await;
+            assert_eq!(st, StatusCode::FORBIDDEN, "{body} got in: {out}");
+        }
+        // a worker may not widen the circle it was let into
+        let (st, _) = call(
+            &app,
+            post_req("/api/invite", "claude-key", json!({"name": "friend"})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+        // …and nothing was written to the agents file by any of it
+        let agents = std::fs::read_to_string(&app.cfg.agents_file).unwrap();
+        assert!(!agents.contains("intruder") && !agents.contains("friend"));
+    }
+
+    /// Both ways in, end to end: the machine's own secret, and a vouching.
+    #[tokio::test]
+    async fn a_key_comes_from_being_here_or_from_somebody_vouching() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = app(tmp.path());
+        let secret = crate::join::enroll_secret(&app.cfg);
+        let post_open = |body: Value| {
+            Request::post("/api/join")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+
+        // on the machine
+        let (st, out) = call(
+            &app,
+            post_open(json!({"name": "scribe", "secret": secret, "t": "roof"})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let key = v["key"].as_str().unwrap().to_string();
+        assert_eq!(v["topics"], "roof");
+        // the key works, and the name is now spoken for
+        let (st, who) = call(&app, get_req("/api/whoami", Some(&key))).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(
+            serde_json::from_str::<Value>(&who).unwrap()["name"],
+            "scribe"
+        );
+        let (st, _) = call(&app, post_open(json!({"name": "scribe", "secret": secret}))).await;
+        assert_eq!(st, StatusCode::CONFLICT);
+
+        // a lead vouches for someone who is not here
+        let (st, out) = call(
+            &app,
+            post_req(
+                "/api/invite",
+                "ana-key",
+                json!({"name": "bot", "role": "lead", "t": "a2p"}),
+            ),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{out}");
+        let token = serde_json::from_str::<Value>(&out).unwrap()["invite"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let (st, out) = call(&app, post_open(json!({"invite": token}))).await;
+        assert_eq!(st, StatusCode::OK, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        // the invitation decides, not the asker
+        assert_eq!(
+            (v["name"].as_str(), v["role"].as_str(), v["topics"].as_str()),
+            (Some("bot"), Some("lead"), Some("a2p"))
+        );
+        // and it is good exactly once
+        assert_eq!(
+            call(&app, post_open(json!({"invite": token}))).await.0,
+            StatusCode::FORBIDDEN
+        );
+        // joining is on the board
+        let (_, board) = call(&app, get_req("/api/board.txt", Some("ana-key"))).await;
+        assert!(
+            board.contains("bot joined") && board.contains("scribe joined"),
+            "{board}"
         );
     }
 

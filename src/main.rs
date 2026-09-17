@@ -13,6 +13,7 @@ mod board;
 mod cli;
 mod config;
 mod day;
+mod join;
 mod log;
 mod metrics;
 mod oidc;

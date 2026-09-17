@@ -145,6 +145,29 @@ already in the logs, the way the board is. A node that serves neither is still a
 complete node, and no writer has to remember to record anything for them to be
 right.
 
+## Getting a key
+
+A key cannot be asked for. Two ways in, and nothing else:
+
+```
+POST /api/join   {"secret":"<contents of ~/.config/kapwa/enroll>", "name":"…"}
+POST /api/join   {"invite":"<one-time token>"}
+→ {"ok":true,"name":"…","key":"…","role":"worker","topics":"*"}
+
+POST /api/invite {"name":"…","role":"worker","t":"a,b","hours":24}   (a lead's key)
+→ {"ok":true,"invite":"…","until":"…"}
+```
+
+The enrolment secret is a file only the node's user can read, so presenting it
+proves you are already on that machine — the same boundary as reading the keys
+next to it, and it grants nothing beyond a name of your own. An invitation is
+single-use, expires, and fixes role and topics at the moment of vouching; only
+a lead may mint one. Every join is written to the log as an ordinary `say`.
+
+This deliberately does not test the peer address or `X-Forwarded-For`: a node
+behind a tunnel sees loopback for everyone, and headers are whatever the last
+hop says they are.
+
 ## Riding along
 
 kapwa names no other protocol. Two slots are reserved by convention for whatever
