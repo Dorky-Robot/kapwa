@@ -25,7 +25,8 @@ use crate::{oidc, render, App};
 pub fn router(app: App) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
-        .route("/api/protocol", get(protocol))
+        .route("/how", get(how))
+        .route("/api/protocol", get(how))
         .route("/", get(dashboard))
         .route("/auth/login", get(oidc::login))
         .route("/auth/callback", get(oidc::callback))
@@ -44,7 +45,7 @@ pub fn router(app: App) -> Router {
         .fallback(|| async {
             (
                 StatusCode::NOT_FOUND,
-                Json(json!({"error":"no route; GET /api/protocol says how this works"})),
+                Json(json!({"error":"no route; GET /how says how this works"})),
             )
         })
         .layer(tower_http::trace::TraceLayer::new_for_http())
@@ -65,10 +66,10 @@ async fn healthz(State(app): State<App>) -> Json<Value> {
     Json(json!({"ok": true, "writer": app.cfg.writer}))
 }
 
-/// The manual. Open on purpose: it holds instructions, not content, and an
-/// agent that finds the URL should be able to learn the rest.
-async fn protocol(State(app): State<App>) -> Response {
-    text(render::protocol(&app))
+/// The front door. Open on purpose: it holds instructions, not content, and
+/// anything that finds the URL should be able to learn the rest from it.
+async fn how(State(app): State<App>) -> Response {
+    text(render::how(&app))
 }
 
 // ── the board: people, read-only ───────────────────────────────────
@@ -385,9 +386,14 @@ mod tests {
             call(&app, get_req("/healthz", None)).await.0,
             StatusCode::OK
         );
-        let (st, body) = call(&app, get_req("/api/protocol", None)).await;
-        assert_eq!(st, StatusCode::OK);
-        assert!(body.contains("say") && body.contains("take"));
+        for p in ["/how", "/api/protocol"] {
+            let (st, body) = call(&app, get_req(p, None)).await;
+            assert_eq!(st, StatusCode::OK, "{p}");
+            assert!(
+                body.contains("say") && body.contains("take") && body.contains("/api/event"),
+                "{p}"
+            );
+        }
         for p in [
             "/api/writers",
             "/api/board.txt",

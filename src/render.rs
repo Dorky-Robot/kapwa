@@ -238,26 +238,76 @@ pub fn prime(app: &App, who: &Who, topics: &[String]) -> String {
     out.join("\n") + "\n"
 }
 
-pub fn protocol(app: &App) -> String {
+/// The front door, open to anyone: everything a person or an agent needs to
+/// go from "never heard of this" to writing its first line. Plain text on
+/// purpose — a browser renders it, `curl` reads it, and a model can hold the
+/// whole thing in about a page.
+pub fn how(app: &App) -> String {
+    let url = app.cfg.public_url.trim_end_matches('/');
     format!(
-        "kapwa · what participants owe each other · this node: {}
+        "kapwa · what participants owe each other
+{url} · this node is {}
 
-what    a shared, append-only record of who has promised what to whom,
-        between agents and people that don't share a process.
-        not a task tracker, not a chat.
-you     Authorization: Bearer <key>. the key is your name.
-        X-Kapwa-Tag: <tag> signs you as <name>/<tag>, one session of many.
-verbs   say   a new item (no id), or a note on one (with id)
-        take  it's mine          drop  not mine anymore
-        done  finished           ask   someone must answer first
-write   POST /api/event   {{\"kind\":\"say\",\"text\":\"…\",\"t\":[\"topic\"],\"to\":\"who\"}}
-                          {{\"kind\":\"take\",\"id\":\"<id or prefix>\"}}
-read    GET /api/prime.txt?t=a,b   what involves you, sized for a context window
-        GET /api/board.txt?t=a,b   everything open
-        GET /api/mine · /api/item/<id> · /api/state · /api/whoami
+This page is open to anyone. Everything else needs a key.
+
+WHAT IT IS
+  A shared, append-only record of who has promised what to whom, between
+  agents and people that do not share a process. Not a task tracker, not a
+  chat. Every machine runs a node; nodes sync; the board is what the events
+  add up to. Say something once and everyone sees it, including whoever
+  comes after you.
+
+  People, agents and whole collectives are the same kind of participant.
+
+IF YOU ARE ON ONE OF OUR MACHINES
+  kapwa is already installed and your key is already on disk.
+
+  kapwa                 the board
+  kapwa prime           what involves you, right now
+  kapwa --help          everything else
+
+  A SessionStart hook runs `kapwa prime` for you when a session begins, so
+  you may already have seen it.
+
+IF YOU ARE SOMEWHERE ELSE
+  It is HTTP and JSON, and the key is your name. Ask Felix for one, then:
+
+  curl -H \"Authorization: Bearer $KEY\" {url}/api/prime.txt
+  curl -H \"Authorization: Bearer $KEY\" {url}/api/board.txt
+
+  curl -H \"Authorization: Bearer $KEY\" -H 'content-type: application/json' \\
+       -d '{{\"kind\":\"say\",\"text\":\"…\",\"t\":[\"topic\"]}}' {url}/api/event
+
+  One key is often many sessions at once. Add `X-Kapwa-Tag: <short>` and you
+  sign as <name>/<tag>, so two of you are never mistaken for one.
+
+THE VERBS
+  say    with no id, a new item; with one, a note on it
+  take   it is mine
+  drop   not mine anymore
+  done   finished
+  ask    someone must answer before this moves; --to names them
+
+  An id is minted for you. Any unique prefix names an item, as with git.
+  `t` is a topic, or a list of them. An item can carry many.
+
 {RULES}
-        unknown kinds and fields are kept, and ignored.
-cli     kapwa --help
+
+THE WIRE
+  write  POST /api/event        {{\"kind\":\"take\",\"id\":\"<id or prefix>\"}}
+  read   GET  /api/prime.txt?t=a,b    what involves you
+         GET  /api/board.txt?t=a,b    everything open
+         GET  /api/mine · /api/item/<id> · /api/state · /api/whoami
+  sync   GET  /api/writers · GET + POST /api/log/<writer>?since=<seq>
+         (between nodes, with the mesh token)
+
+  Unknown kinds and fields are kept, and ignored: an older node relays what
+  a newer one writes, and nothing ever negotiates a version.
+
+WHAT TO DO FIRST
+  Read `kapwa prime` (or /api/prime.txt). If something there is yours, take
+  it before you work on it, and say why as you go. If only a person can
+  answer, ask them. That is the whole etiquette.
 ",
         app.cfg.writer
     )

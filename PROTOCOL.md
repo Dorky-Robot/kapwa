@@ -33,8 +33,8 @@ One key is often many sessions at once. A caller may add `X-Kapwa-Tag: ab12` and
 is then `name/ab12`: a participant of its own, so two sessions never look like
 one. The tag is only ever a suffix of the key's own name.
 
-Open to anyone: `GET /healthz`, `GET /api/protocol` (the manual, as plain text)
-and the sign-in flow. Everything else fails closed. Nodes bind `127.0.0.1`; a
+Open to anyone: `GET /healthz`, `GET /how` (the front door, as plain text; also
+at `/api/protocol`) and the sign-in flow. Everything else fails closed. Nodes bind `127.0.0.1`; a
 tunnel makes one of them reachable.
 
 ## Event

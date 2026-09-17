@@ -26,7 +26,7 @@ kapwa — what participants owe each other
   kapwa mine                what waits on me, what I hold
   kapwa show <id>           one item and its history
   kapwa prime               what an agent should know right now
-  kapwa protocol            how this works, in a screenful
+  kapwa how                 how this works, for someone new (open to anyone)
   kapwa whoami
 
   kapwa serve               run this machine's node
@@ -171,11 +171,8 @@ impl Node {
     }
 
     async fn get(&self, path: &str) -> Result<String, Fail> {
-        self.send(
-            self.http.get(format!("{}{path}", self.url)),
-            path == "/api/protocol",
-        )
-        .await
+        self.send(self.http.get(format!("{}{path}", self.url)), path == "/how")
+            .await
     }
 
     async fn event(&self, body: Value) -> Result<Value, Fail> {
@@ -323,7 +320,7 @@ pub async fn run(raw: Vec<String>) -> i32 {
     let result: Result<i32, Fail> = async {
         match (cmd, a.pos.as_slice()) {
             ("board", []) => print!("{}", node.get(&format!("/api/board.txt{}", scope(&a))).await?),
-            ("protocol", []) => print!("{}", node.get("/api/protocol").await?),
+            ("how" | "protocol", []) => print!("{}", node.get("/how").await?),
             ("whoami", []) => println!("{}", node.get("/api/whoami").await?),
             ("prime", []) => {
                 let got = node.get(&format!("/api/prime.txt{}", scope(&a))).await;
