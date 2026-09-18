@@ -18,9 +18,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::{Caller, Kind, Who};
-use crate::board::{clean_topic, verb};
+use crate::board::{clean_topic, verb, Lens};
 use crate::log::Event;
-use crate::{join as enrol, oidc, render, try_ui, App};
+use crate::{join as enrol, oidc, render, try_pulse, try_ui, App};
 
 pub fn router(app: App) -> Router {
     Router::new()
@@ -54,6 +54,8 @@ pub fn router(app: App) -> Router {
         // a sandbox, until one of them is picked
         .route("/try/", get(|s, c| try_page(s, c, "index")))
         .route("/try/constellation", get(|s, c| try_page(s, c, "c")))
+        .route("/try/panel", get(|s, c, q| pulse_page(s, c, q, "panel")))
+        .route("/try/pulse", get(|s, c, q| pulse_page(s, c, q, "pulse")))
         .route("/try/rail", get(|s, c| try_page(s, c, "r")))
         .fallback(|| async {
             (
@@ -100,7 +102,7 @@ async fn dashboard(
     headers: axum::http::HeaderMap,
 ) -> Response {
     if let Some(who) = &caller.0 {
-        return Html(render::page(&app, who).into_string()).into_response();
+        return Html(render::page(&app, who, &wide(&app, who, &None)).into_string()).into_response();
     }
     let wants_html = headers
         .get(header::ACCEPT)
@@ -444,6 +446,22 @@ async fn event(State(app): State<App>, caller: Caller, Json(mut attrs): Json<Eve
             )
         }
     };
+    // The fence has a write side, and this is it. The clinical items that
+    // started this arrived as an ordinary run of `say` from one key on
+    // 2026-09-17 — no importer, just a script with a topic list — so a read
+    // filter alone would leave the next import free to land the same way.
+    // A key may tag a private topic only if its own line names it, which is
+    // the same rule that decides what it may read.
+    let shut = fence(&app, &who);
+    if let Some(t) = crate::board::topics_of(&attrs)
+        .into_iter()
+        .find(|t| crate::board::fenced(t, &shut))
+    {
+        return bad(
+            StatusCode::FORBIDDEN,
+            &format!("#{t} is private on this node, and your key does not name it"),
+        );
+    }
     // A new item with no topic would land in the commons, where it is on
     // everyone's board and in nobody's. So it goes to its author's own
     // topic instead: a namespace you get by construction, and never a
@@ -483,8 +501,8 @@ struct Scope {
 /// it was given, and always its own: whatever it writes untagged lands
 /// there, so it never loses sight of its own work. A key with no topics
 /// listed watches everything.
-fn topics(q: &Scope, who: &Who) -> Vec<String> {
-    match &q.t {
+fn topics(t: &Option<String>, who: &Who) -> Vec<String> {
+    match t {
         Some(t) => t.split(',').filter_map(clean_topic).collect(),
         None => {
             let mut t = who.topics.clone().unwrap_or_default();
@@ -496,6 +514,42 @@ fn topics(q: &Scope, who: &Who) -> Vec<String> {
             }
             t
         }
+    }
+}
+
+/// Which of the node's private topics stay shut to this caller. A key lifts
+/// a pattern only because its own line in the agents file names a topic that
+/// matches it, so what anyone may see is decided where the keys are kept and
+/// never by the request. A person signed in at the dashboard has no line, so
+/// the whole fence holds for them.
+fn fence(app: &App, who: &Who) -> Vec<String> {
+    let held = who.topics.clone().unwrap_or_default();
+    app.cfg
+        .private_topics
+        .iter()
+        .filter(|p| !held.iter().any(|t| t.contains(p.as_str())))
+        .cloned()
+        .collect()
+}
+
+/// The narrow view: what involves you, under the topics you watch.
+fn lens(app: &App, who: &Who, t: &Option<String>) -> Lens {
+    Lens {
+        topics: topics(t, who),
+        fence: fence(app, who),
+    }
+}
+
+/// The wide view: the whole board unless `t` narrows it, because a key's own
+/// topics scope what it is primed with, not what it may look at. The fence
+/// still holds — that is the whole difference between a scope and a fence.
+fn wide(app: &App, who: &Who, t: &Option<String>) -> Lens {
+    Lens {
+        topics: t
+            .as_deref()
+            .map(|t| t.split(',').filter_map(clean_topic).collect())
+            .unwrap_or_default(),
+        fence: fence(app, who),
     }
 }
 
@@ -530,30 +584,16 @@ async fn topics_in_use(State(app): State<App>, caller: Caller) -> Response {
 
 async fn prime_txt(State(app): State<App>, caller: Caller, Query(q): Query<Scope>) -> Response {
     match caller.allow(&[Kind::Agent, Kind::User]) {
-        Ok(w) => text(render::prime(&app, w, &topics(&q, w))),
+        Ok(w) => text(render::prime(&app, w, &lens(&app, w, &q.t))),
         Err(r) => r,
     }
 }
 
 async fn board_txt(State(app): State<App>, caller: Caller, Query(q): Query<Scope>) -> Response {
-    if let Err(r) = caller.allow(&[Kind::Agent, Kind::User]) {
-        return r;
+    match caller.allow(&[Kind::Agent, Kind::User]) {
+        Ok(w) => text(render::board(&app, &wide(&app, w, &q.t))),
+        Err(r) => r,
     }
-    // the whole board unless asked to narrow it: a key's own topics scope
-    // what it is primed with, not what it may look at
-    let ts: Vec<String> =
-        q.t.as_deref()
-            .map(|t| t.split(',').filter_map(clean_topic).collect())
-            .unwrap_or_default();
-    text(render::board(&app, &ts))
-}
-
-/// Asked for, never assumed: the whole board's day unless `t` narrows it,
-/// the same rule `board.txt` follows.
-fn asked_for(t: &Option<String>) -> Vec<String> {
-    t.as_deref()
-        .map(|t| t.split(',').filter_map(clean_topic).collect())
-        .unwrap_or_default()
 }
 
 #[derive(Deserialize)]
@@ -579,7 +619,7 @@ async fn day(State(app): State<App>, caller: Caller, Query(q): Query<DayQ>) -> R
         Err(e) => return bad(StatusCode::BAD_REQUEST, &e),
     };
     let st = app.board.read().unwrap().clone();
-    let steps = crate::day::day(&st, on, &who.name, &asked_for(&q.t));
+    let steps = crate::day::day(&st, on, &who.name, &wide(&app, &who, &q.t));
     Json(json!({"on": on.to_string(), "you": who.name, "steps": steps})).into_response()
 }
 
@@ -589,7 +629,7 @@ async fn day_txt(State(app): State<App>, caller: Caller, Query(q): Query<DayQ>) 
         Err(r) => return r,
     };
     match on_day(&q) {
-        Ok(on) => text(render::day(&app, &who, on, &asked_for(&q.t))),
+        Ok(on) => text(render::day(&app, &who, on, &wide(&app, &who, &q.t))),
         Err(e) => bad(StatusCode::BAD_REQUEST, &e),
     }
 }
@@ -602,29 +642,28 @@ struct StatsQ {
 }
 
 async fn stats(State(app): State<App>, caller: Caller, Query(q): Query<StatsQ>) -> Response {
-    if let Err(r) = caller.allow(&[Kind::Agent, Kind::User]) {
-        return r;
-    }
+    let who = match caller.allow(&[Kind::Agent, Kind::User]) {
+        Ok(w) => w.clone(),
+        Err(r) => return r,
+    };
+    let who = &who;
     let st = app.board.read().unwrap().clone();
-    Json(crate::metrics::of(
-        &st,
-        q.days.unwrap_or(7),
-        &asked_for(&q.t),
-    ))
-    .into_response()
+    Json(crate::metrics::of(&st, q.days.unwrap_or(7), &wide(&app, who, &q.t))).into_response()
 }
 
 async fn stats_txt(State(app): State<App>, caller: Caller, Query(q): Query<StatsQ>) -> Response {
-    if let Err(r) = caller.allow(&[Kind::Agent, Kind::User]) {
-        return r;
-    }
-    text(render::stats(&app, q.days.unwrap_or(7), &asked_for(&q.t)))
+    let who = match caller.allow(&[Kind::Agent, Kind::User]) {
+        Ok(w) => w.clone(),
+        Err(r) => return r,
+    };
+    let who = &who;
+    text(render::stats(&app, q.days.unwrap_or(7), &wide(&app, who, &q.t)))
 }
 
 async fn mine(State(app): State<App>, caller: Caller, Query(q): Query<Scope>) -> Response {
     match caller.allow(&[Kind::Agent, Kind::User]) {
         Ok(w) => {
-            let m = render::mine(&app, w, &topics(&q, w));
+            let m = render::mine(&app, w, &lens(&app, w, &q.t));
             Json(json!({"you": w.name, "asked": m.asked, "held": m.held, "said_to": m.said_to, "open": m.open})).into_response()
         }
         Err(r) => r,
@@ -632,18 +671,31 @@ async fn mine(State(app): State<App>, caller: Caller, Query(q): Query<Scope>) ->
 }
 
 async fn state(State(app): State<App>, caller: Caller) -> Response {
-    if let Err(r) = caller.allow(&[Kind::Agent, Kind::User]) {
-        return r;
-    }
-    Json(app.board.read().unwrap().clone()).into_response()
+    let who = match caller.allow(&[Kind::Agent, Kind::User]) {
+        Ok(w) => w.clone(),
+        Err(r) => return r,
+    };
+    // the raw fold, which would otherwise be the way around every other
+    // door: the fence is subtracted here too, or it is not a fence
+    let lens = wide(&app, &who, &None);
+    let mut st = app.board.read().unwrap().clone();
+    st.items.retain(|_, i| lens.wanted(i));
+    Json(st).into_response()
 }
 
 async fn item(State(app): State<App>, caller: Caller, Path(id): Path<String>) -> Response {
-    if let Err(r) = caller.allow(&[Kind::Agent, Kind::User]) {
-        return r;
-    }
+    let who = match caller.allow(&[Kind::Agent, Kind::User]) {
+        Ok(w) => w.clone(),
+        Err(r) => return r,
+    };
+    let lens = wide(&app, &who, &None);
     match resolve(&app, &id) {
-        Ok(Some(id)) => Json(app.board.read().unwrap().items.get(&id)).into_response(),
+        // a fenced item is not "forbidden" but absent: saying it exists is
+        // already saying more than this caller is owed
+        Ok(Some(id)) => match app.board.read().unwrap().items.get(&id) {
+            Some(i) if lens.wanted(i) => Json(i).into_response(),
+            _ => bad(StatusCode::NOT_FOUND, "no such item"),
+        },
         Ok(None) => bad(StatusCode::NOT_FOUND, "no such item"),
         Err(e) => bad(StatusCode::CONFLICT, &e),
     }
@@ -651,15 +703,39 @@ async fn item(State(app): State<App>, caller: Caller, Path(id): Path<String>) ->
 
 /// Ways of looking at the same fold, to be chosen by seeing them. Behind
 /// the same door as the board: it is the same data.
-async fn try_page(State(app): State<App>, caller: Caller, which: &'static str) -> Response {
+#[derive(Deserialize)]
+struct AsData {
+    data: Option<String>,
+}
+
+/// The page, or the numbers it draws. One route, because the page refreshes
+/// itself from the same URL it was served from when the live stream fires.
+async fn pulse_page(
+    State(app): State<App>,
+    caller: Caller,
+    Query(q): Query<AsData>,
+    which: &'static str,
+) -> Response {
     if let Err(r) = caller.allow(&[Kind::Agent, Kind::User]) {
         return r;
     }
+    if q.data.is_some() {
+        return Json(try_pulse::data(&app)).into_response();
+    }
+    Html(try_pulse::page(&app, which).into_string()).into_response()
+}
+
+async fn try_page(State(app): State<App>, caller: Caller, which: &'static str) -> Response {
+    let who = match caller.allow(&[Kind::Agent, Kind::User]) {
+        Ok(w) => w.clone(),
+        Err(r) => return r,
+    };
+    let lens = &wide(&app, &who, &None);
     Html(
         match which {
-            "c" => try_ui::constellation(&app),
-            "r" => try_ui::rail(&app),
-            _ => try_ui::dashboard(&app),
+            "c" => try_ui::constellation(&app, lens),
+            "r" => try_ui::rail(&app, lens),
+            _ => try_ui::dashboard(&app, lens),
         }
         .into_string(),
     )
@@ -669,10 +745,15 @@ async fn try_page(State(app): State<App>, caller: Caller, which: &'static str) -
 /// What just happened, newest first. An agent coming back after a while
 /// wants this, not the whole board.
 async fn feed(State(app): State<App>, caller: Caller, Query(q): Query<Limit>) -> Response {
-    if let Err(r) = caller.allow(&[Kind::Agent, Kind::User]) {
-        return r;
-    }
-    let rows = render::feed(&app, q.limit.unwrap_or(30).min(200));
+    let who = match caller.allow(&[Kind::Agent, Kind::User]) {
+        Ok(w) => w.clone(),
+        Err(r) => return r,
+    };
+    let rows = render::feed(
+        &app,
+        &wide(&app, &who, &None),
+        q.limit.unwrap_or(30).min(200),
+    );
     if q.format.as_deref() == Some("json") {
         let v: Vec<Value> = rows
             .into_iter()
@@ -740,10 +821,16 @@ mod tests {
     use tower::ServiceExt;
 
     fn app(tmp: &std::path::Path) -> App {
+        fenced_app(tmp, vec![])
+    }
+
+    /// The same node with a private topic set, so the fence is exercised by
+    /// the door rather than by a unit test of its predicate.
+    fn fenced_app(tmp: &std::path::Path, private: Vec<String>) -> App {
         let agents = tmp.join("agents");
         std::fs::write(
             &agents,
-            "# comment\nclaude:claude-key:worker:roof,fence\nana:ana-key:lead:*\n",
+            "# comment\nclaude:claude-key:worker:roof,fence\nana:ana-key:lead:*\nnurse:nurse-key:worker:ward\n",
         )
         .unwrap();
         App::new(Config {
@@ -753,6 +840,7 @@ mod tests {
             peers: vec![],
             mesh_token: Some("mesh-secret".into()),
             agents_file: agents,
+            private_topics: private,
             public_url: "http://127.0.0.1:0".into(),
             secret_key_base: None,
             oidc: None,
@@ -1148,6 +1236,50 @@ mod tests {
             serde_json::from_str::<Value>(&body).unwrap()["event"]["by"],
             "claude"
         );
+    }
+
+    #[tokio::test]
+    async fn a_private_topic_is_on_no_default_board_and_no_key_may_tag_one_uninvited() {
+        let tmp = tempfile::tempdir().unwrap();
+        // one word fences a family: `ward` and `ward-notes` both go behind it
+        let app = fenced_app(tmp.path(), vec!["ward".into()]);
+        say(&app, "nurse-key", json!({"kind":"say","id":"w","text":"a record","t":["ward-notes"]})).await;
+        say(&app, "ana-key", json!({"kind":"say","id":"r","text":"the roof","t":["roof"]})).await;
+
+        // ana watches `*` — everything, which is exactly who must not see it
+        for p in ["/api/prime.txt", "/api/board.txt", "/api/state", "/api/stats.txt", "/api/day.txt"] {
+            let (st, body) = call(&app, get_req(p, Some("ana-key"))).await;
+            assert_eq!(st, StatusCode::OK, "{p}");
+            assert!(!body.contains("a record"), "{p} still carries it:\n{body}");
+        }
+        // naming the topic is not how you get in: a scope narrows, never widens
+        let (_, body) = call(&app, get_req("/api/board.txt?t=ward-notes", Some("ana-key"))).await;
+        assert!(!body.contains("a record"), "{body}");
+        // nor is knowing the id
+        assert_eq!(
+            call(&app, get_req("/api/item/w", Some("ana-key"))).await.0,
+            StatusCode::NOT_FOUND
+        );
+        // the key whose line names the topic reads it, and the rest of the board too
+        let (_, body) = call(&app, get_req("/api/board.txt", Some("nurse-key"))).await;
+        assert!(body.contains("a record"), "{body}");
+        let (_, body) = call(&app, get_req("/api/board.txt", Some("ana-key"))).await;
+        assert!(body.contains("the roof"), "the fence subtracts one topic, not the board:\n{body}");
+
+        // and the write side: the import that started this cannot happen again
+        let (st, body) = call(
+            &app,
+            post_req("/api/event", "ana-key", json!({"kind":"say","text":"imported","t":["ward","roof"]})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
+        assert!(body.contains("private"), "{body}");
+        let (st, _) = call(
+            &app,
+            post_req("/api/event", "nurse-key", json!({"kind":"say","text":"mine to write","t":["ward"]})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK);
     }
 
     #[tokio::test]

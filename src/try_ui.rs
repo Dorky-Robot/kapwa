@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 
-use crate::board::base;
+use crate::board::{base, Lens};
 use crate::render::{ago, LIVE_JS};
 use crate::App;
 
@@ -58,10 +58,10 @@ fn note(
 /// Who spoke to whom, read out of the log. Four ways one participant's act
 /// lands on another: addressing them, asking them, answering them, and
 /// picking up what they wrote.
-pub fn edges(app: &App) -> Vec<Edge> {
+pub fn edges(app: &App, lens: &Lens) -> Vec<Edge> {
     let st = app.board.read().unwrap();
     let mut acc: BTreeMap<(String, String, &'static str), (usize, String)> = BTreeMap::new();
-    for i in st.items.values() {
+    for i in st.items.values().filter(|i| lens.wanted(i)) {
         let author = i.created_by.clone();
         let mut asker = String::new();
         let mut asked = String::new();
@@ -112,7 +112,7 @@ pub fn edges(app: &App) -> Vec<Edge> {
     v
 }
 
-pub fn parties(app: &App) -> Vec<Party> {
+pub fn parties(app: &App, lens: &Lens) -> Vec<Party> {
     let st = app.board.read().unwrap();
     let mut acc: BTreeMap<String, Party> = BTreeMap::new();
     let seen = |acc: &mut BTreeMap<String, Party>, name: &str, at: &str| {
@@ -132,7 +132,7 @@ pub fn parties(app: &App) -> Vec<Party> {
             p.last = at.to_string();
         }
     };
-    for i in st.items.values() {
+    for i in st.items.values().filter(|i| lens.wanted(i)) {
         for h in &i.history {
             seen(&mut acc, &h.by, &h.at);
             if let Some(to) = &h.to {
@@ -221,9 +221,9 @@ fn shell(title: &str, which: &str, body: Markup) -> Markup {
 }
 
 /// Everyone on a ring; an arc for every pair that has dealt with each other.
-fn ring(app: &App) -> Markup {
-    let parties = parties(app);
-    let edges = edges(app);
+fn ring(app: &App, lens: &Lens) -> Markup {
+    let parties = parties(app, lens);
+    let edges = edges(app, lens);
     let n = parties.len().max(1);
     let (w, h) = (700.0_f64, 520.0_f64);
     let (cx, cy, r) = (w / 2.0, h / 2.0 - 6.0, (h / 2.0 - 96.0).max(110.0));
@@ -280,8 +280,8 @@ fn ring(app: &App) -> Markup {
 }
 
 /// Who is about, as lanes: derived from the log, so nobody announces itself.
-fn lanes(app: &App) -> Markup {
-    let parties = parties(app);
+fn lanes(app: &App, lens: &Lens) -> Markup {
+    let parties = parties(app, lens);
     html! {
         div class="phead" { "who is about" span class="dim" { (parties.len()) } }
         @for p in &parties {
@@ -308,11 +308,12 @@ fn lanes(app: &App) -> Markup {
 /// it named one, else whoever wrote the item being acted upon. Walks the
 /// histories rather than the text feed, because the feed drops the `to` and
 /// the arrow is the whole point here.
-fn rail_rows(app: &App, n: usize) -> Markup {
+fn rail_rows(app: &App, lens: &Lens, n: usize) -> Markup {
     let st = app.board.read().unwrap();
     let mut rows: Vec<(String, String, String, String, String, String)> = st
         .items
         .values()
+        .filter(|i| lens.wanted(i))
         .flat_map(|i| {
             i.history.iter().map(move |h| {
                 let to = h.to.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| {
@@ -359,30 +360,30 @@ fn rail_rows(app: &App, n: usize) -> Markup {
 /// about down the side. One page, because the question "who is talking to
 /// whom" is answered by the two of them together — the ring says who deals
 /// with whom at all, the rail says what they are saying right now.
-pub fn dashboard(app: &App) -> Markup {
-    let e = edges(app);
-    let p = parties(app);
+pub fn dashboard(app: &App, lens: &Lens) -> Markup {
+    let e = edges(app, lens);
+    let p = parties(app, lens);
     shell(
         "dashboard",
         "d",
         html! {
             div class="three" {
-                section class="panel lanes" { (lanes(app)) }
+                section class="panel lanes" { (lanes(app, lens)) }
                 section class="panel" {
                     div class="phead" { "who deals with whom" span class="dim" { (p.len()) " people · " (e.len()) " pairs" } }
-                    (ring(app))
+                    (ring(app, lens))
                 }
                 section class="panel" {
                     div class="phead" { "the rail" span class="dim" { "newest first" } }
-                    (rail_rows(app, 24))
+                    (rail_rows(app, lens, 24))
                 }
             }
         },
     )
 }
 
-pub fn constellation(app: &App) -> Markup {
-    let edges = edges(app);
+pub fn constellation(app: &App, lens: &Lens) -> Markup {
+    let edges = edges(app, lens);
     shell(
         "constellation",
         "c",
@@ -390,7 +391,7 @@ pub fn constellation(app: &App) -> Markup {
             div class="split" {
                 section class="panel grow" {
                     div class="phead" { "who deals with whom" span class="dim" { (edges.len()) " pairs" } }
-                    (ring(app))
+                    (ring(app, lens))
                 }
                 section class="panel side" {
                     div class="phead" { "lately" }
@@ -411,7 +412,7 @@ pub fn constellation(app: &App) -> Markup {
     )
 }
 
-pub fn rail(app: &App) -> Markup {
+pub fn rail(app: &App, lens: &Lens) -> Markup {
     shell(
         "rail",
         "r",
@@ -419,9 +420,9 @@ pub fn rail(app: &App) -> Markup {
             div class="split" {
                 section class="panel grow" {
                     div class="phead" { "the rail" span class="dim" { "newest first" } }
-                    (rail_rows(app, 40))
+                    (rail_rows(app, lens, 40))
                 }
-                section class="panel side lanes" { (lanes(app)) }
+                section class="panel side lanes" { (lanes(app, lens)) }
             }
         },
     )

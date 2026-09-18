@@ -19,7 +19,7 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::board::{Item, State};
+use crate::board::{Item, Lens, State};
 
 /// Held, and nothing said for this long: long enough that a session has
 /// probably ended without dropping what it held.
@@ -143,10 +143,6 @@ pub fn span(m: i64) -> String {
     }
 }
 
-fn wanted(i: &Item, topics: &[String]) -> bool {
-    topics.is_empty() || i.topics.iter().any(|t| topics.contains(t))
-}
-
 fn first(i: &Item, f: impl Fn(&crate::board::Hist) -> bool) -> Option<&crate::board::Hist> {
     i.history.iter().find(|h| f(h))
 }
@@ -156,7 +152,7 @@ fn won(h: &crate::board::Hist) -> bool {
     h.verb == "take" && h.fold.is_none()
 }
 
-pub fn of(st: &State, days: i64, topics: &[String]) -> Metrics {
+pub fn of(st: &State, days: i64, lens: &Lens) -> Metrics {
     let now = Utc::now();
     let from = now - chrono::Duration::days(days.max(1));
     let inside = |at: &str| when(at).is_some_and(|t| t >= from && t <= now);
@@ -174,7 +170,7 @@ pub fn of(st: &State, days: i64, topics: &[String]) -> Metrics {
     let mut hands: std::collections::BTreeMap<String, Hand> = Default::default();
     let mut topic_count: std::collections::BTreeMap<String, usize> = Default::default();
 
-    for i in st.items.values().filter(|i| wanted(i, topics)) {
+    for i in st.items.values().filter(|i| lens.wanted(i)) {
         let took = first(i, won);
         let did = first(i, |h| h.verb == "done");
         let mut touched = false;
@@ -438,7 +434,7 @@ mod tests {
             ev("take", "x", 240, "ben", json!({})),
             ev("done", "x", 180, "ben", json!({})),
         ]);
-        let m = of(&st, 7, &[]);
+        let m = of(&st, 7, &Lens::all());
         assert_eq!((m.opened, m.taken, m.finished), (1, 1, 1));
         assert_eq!((m.before_taken.n, m.before_taken.median), (1, 60));
         assert_eq!((m.to_finish.n, m.to_finish.median), (1, 60));
@@ -453,7 +449,7 @@ mod tests {
             ev("take", "x", 90, "ben", json!({})),
             ev("take", "x", 80, "cal", json!({})),
         ]);
-        let m = of(&st, 7, &[]);
+        let m = of(&st, 7, &Lens::all());
         assert_eq!((m.taken, m.contested), (1, 1));
         assert_eq!(m.before_taken.median, 10, "the winning take, not the loser");
     }
@@ -466,12 +462,12 @@ mod tests {
             ev("ask", "x", 180, "ben", json!({"to":"ana","text":"A or B?"})),
             ev("say", "x", 150, "ana", json!({"text":"B"})),
         ];
-        let m = of(&state(&answered), 7, &[]);
+        let m = of(&state(&answered), 7, &Lens::all());
         assert_eq!((m.asked, m.to_answer.n, m.to_answer.median), (1, 1, 30));
         assert_eq!(m.waiting_now, 0);
 
         // unanswered: it does not time, it accumulates
-        let m = of(&state(&answered[..3]), 7, &[]);
+        let m = of(&state(&answered[..3]), 7, &Lens::all());
         assert_eq!((m.asked, m.to_answer.n, m.waiting_now), (1, 0, 1));
         assert_eq!(m.unanswered[0].who, "ana");
         assert!(m.unanswered[0].mins >= 180);
@@ -488,7 +484,7 @@ mod tests {
             // open for ten minutes, which is not yet a problem
             ev("say", "z", 10, "ana", json!({"text":"Z"})),
         ]);
-        let m = of(&st, 1, &[]);
+        let m = of(&st, 1, &Lens::all());
         assert_eq!((m.held_now, m.open_now), (1, 2));
         assert_eq!(m.quiet.len(), 1);
         assert_eq!(m.quiet[0].who, "ben");
@@ -507,8 +503,8 @@ mod tests {
             ev("say", "x", 100, "ana", json!({"text":"X","t":["roof"]})),
             ev("say", "y", 100, "ana", json!({"text":"Y","t":["fence"]})),
         ]);
-        assert_eq!(of(&st, 7, &["roof".into()]).opened, 1);
-        assert_eq!(of(&st, 7, &[]).opened, 2);
+        assert_eq!(of(&st, 7, &Lens::under(&["roof"])).opened, 1);
+        assert_eq!(of(&st, 7, &Lens::all()).opened, 2);
     }
 
     #[test]
@@ -518,7 +514,7 @@ mod tests {
             ev("say", "x", 100, "ana", json!({"text":"X"})),
             ev("take", "x", 120, "ben", json!({})),
         ]);
-        assert_eq!(of(&st, 7, &[]).before_taken.n, 0);
+        assert_eq!(of(&st, 7, &Lens::all()).before_taken.n, 0);
     }
 
     #[test]

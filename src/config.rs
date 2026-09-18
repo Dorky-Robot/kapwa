@@ -9,6 +9,7 @@
 //!   KAPWA_PEERS               comma-separated base URLs of nodes to pull from
 //!   KAPWA_MESH_TOKEN          shared secret nodes present to each other to replicate
 //!   KAPWA_AGENTS_FILE         name:token:role:products — agent keys for this node
+//!   KAPWA_PRIVATE_TOPICS      topics that are on no default board; see `board::Lens`
 //!   KAPWA_PUBLIC_URL          what the dashboard is reached as (OIDC redirect, cookie)
 //!   KAPWA_SECRET_KEY_BASE     ≥64 random bytes, base64; encrypts the session cookie
 //!   KAPWA_OIDC_ISSUER         the network's Pocket ID, e.g. https://id.felixflor.es
@@ -32,6 +33,10 @@ pub struct Config {
     pub peers: Vec<String>,
     pub mesh_token: Option<String>,
     pub agents_file: PathBuf,
+    /// Substring patterns. A topic matching one of these is fenced: it is on
+    /// nobody's board unless their own key names it. Empty by default, so a
+    /// node that says nothing behaves exactly as it always did.
+    pub private_topics: Vec<String>,
     pub public_url: String,
     pub secret_key_base: Option<String>,
     pub oidc: Option<Oidc>,
@@ -123,6 +128,9 @@ impl Config {
             agents_file: env("KAPWA_AGENTS_FILE")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| home().join(".config/kapwa/agents")),
+            private_topics: env("KAPWA_PRIVATE_TOPICS")
+                .map(|p| p.split(',').filter_map(crate::board::clean_topic).collect())
+                .unwrap_or_default(),
             public_url: env("KAPWA_PUBLIC_URL")
                 .unwrap_or_else(|| format!("http://127.0.0.1:{port}")),
             secret_key_base,

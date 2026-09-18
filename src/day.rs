@@ -12,7 +12,7 @@
 use chrono::{DateTime, Local, NaiveDate};
 use serde::Serialize;
 
-use crate::board::{Item, State};
+use crate::board::{Lens, State};
 
 /// One thing somebody did, placed in the day.
 #[derive(Clone, Debug, Serialize)]
@@ -61,10 +61,6 @@ pub fn parse_on(s: &str) -> Option<NaiveDate> {
     }
 }
 
-fn wanted(i: &Item, topics: &[String]) -> bool {
-    topics.is_empty() || i.topics.iter().any(|t| topics.contains(t))
-}
-
 /// How one event reads. The first `say` brings an item into being, so it
 /// opened it; a later one is a word on something that already exists.
 fn word_for(verb: &str, first: bool, fold: Option<&str>) -> String {
@@ -84,9 +80,9 @@ fn word_for(verb: &str, first: bool, fold: Option<&str>) -> String {
 
 /// Every step in every item, in the order they happened: `(at, writer, seq)`,
 /// the same order the board folds in.
-pub fn walk(st: &State, me: &str, topics: &[String]) -> Vec<Step> {
+pub fn walk(st: &State, me: &str, lens: &Lens) -> Vec<Step> {
     let mut steps: Vec<(String, String, u64, Step)> = vec![];
-    for item in st.items.values().filter(|i| wanted(i, topics)) {
+    for item in st.items.values().filter(|i| lens.wanted(i)) {
         // the ask still open as the history plays forward; the fold clears
         // an ask when it is answered, so there is never more than one
         let mut asked_by: Option<String> = None;
@@ -162,9 +158,9 @@ pub fn collapse(steps: Vec<Step>) -> Vec<Step> {
 /// The path through one day, in the reader's own timezone. A day is where
 /// the person is, not where the clock says UTC is: work done at eight in
 /// the evening belongs to that evening.
-pub fn day(st: &State, on: NaiveDate, me: &str, topics: &[String]) -> Vec<Step> {
+pub fn day(st: &State, on: NaiveDate, me: &str, lens: &Lens) -> Vec<Step> {
     collapse(
-        walk(st, me, topics)
+        walk(st, me, lens)
             .into_iter()
             .filter(|s| when(&s.at).is_some_and(|t| t.date_naive() == on))
             .collect(),
@@ -174,8 +170,8 @@ pub fn day(st: &State, on: NaiveDate, me: &str, topics: &[String]) -> Vec<Step> 
 /// Today — unless nothing has happened yet today, and then the last day
 /// that did have something. A board opened first thing in the morning
 /// should show the day it is catching you up on, not a blank.
-pub fn latest(st: &State, me: &str, topics: &[String]) -> (NaiveDate, Vec<Step>) {
-    let all = walk(st, me, topics);
+pub fn latest(st: &State, me: &str, lens: &Lens) -> (NaiveDate, Vec<Step>) {
+    let all = walk(st, me, lens);
     let today = Local::now().date_naive();
     let on = all
         .iter()
@@ -256,7 +252,7 @@ mod tests {
             &st,
             NaiveDate::from_ymd_opt(2026, 9, 17).unwrap(),
             "me/1",
-            &[],
+            &Lens::all(),
         );
         let read: Vec<(&str, &str, &str)> = steps
             .iter()
@@ -294,10 +290,10 @@ mod tests {
             ),
         ]);
         let d17 = NaiveDate::from_ymd_opt(2026, 9, 17).unwrap();
-        assert_eq!(day(&st, d17, "me", &[]).len(), 1);
-        assert_eq!(day(&st, d17.pred_opt().unwrap(), "me", &[]).len(), 1);
-        assert!(day(&st, d17, "me", &["fence".into()]).len() == 1);
-        assert!(day(&st, d17, "me", &["roof".into()]).is_empty());
+        assert_eq!(day(&st, d17, "me", &Lens::all()).len(), 1);
+        assert_eq!(day(&st, d17.pred_opt().unwrap(), "me", &Lens::all()).len(), 1);
+        assert!(day(&st, d17, "me", &Lens::under(&["fence"])).len() == 1);
+        assert!(day(&st, d17, "me", &Lens::under(&["roof"])).is_empty());
     }
 
     #[test]
@@ -319,7 +315,7 @@ mod tests {
             &st,
             NaiveDate::from_ymd_opt(2026, 9, 17).unwrap(),
             "me",
-            &[],
+            &Lens::all(),
         )
         .into_iter()
         .map(|s| s.word)
@@ -343,7 +339,7 @@ mod tests {
             &st,
             NaiveDate::from_ymd_opt(2026, 9, 17).unwrap(),
             "me",
-            &[],
+            &Lens::all(),
         );
         let read: Vec<(&str, &str, usize)> = steps
             .iter()
@@ -388,7 +384,7 @@ mod tests {
             &st,
             NaiveDate::from_ymd_opt(2026, 9, 17).unwrap(),
             "me",
-            &[],
+            &Lens::all(),
         );
         let pairs: Vec<(&str, Option<&str>)> = steps
             .iter()
@@ -417,7 +413,7 @@ mod tests {
             &st,
             NaiveDate::from_ymd_opt(2026, 9, 17).unwrap(),
             "claude/aaa",
-            &[],
+            &Lens::all(),
         );
         assert_eq!(steps.iter().filter(|s| s.mine).count(), 1);
         assert!(steps[0].mine && !steps[1].mine);
@@ -432,13 +428,13 @@ mod tests {
             "ana",
             json!({"text":"Yesterday"}),
         )]);
-        let (on, steps) = latest(&st, "me", &[]);
+        let (on, steps) = latest(&st, "me", &Lens::all());
         assert_eq!(
             (on, steps.len()),
             (NaiveDate::from_ymd_opt(2026, 9, 16).unwrap(), 1)
         );
         // nothing at all: today, empty, and no panic
-        let (on, steps) = latest(&State::default(), "me", &[]);
+        let (on, steps) = latest(&State::default(), "me", &Lens::all());
         assert_eq!((on, steps.len()), (Local::now().date_naive(), 0));
     }
 

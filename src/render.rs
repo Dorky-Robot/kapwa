@@ -3,7 +3,7 @@
 use maud::{html, Markup, DOCTYPE};
 
 use crate::auth::Who;
-use crate::board::{is, Item, State};
+use crate::board::{is, Item, Lens, State};
 use crate::day::Step;
 use crate::puller::PeerStatus;
 use crate::App;
@@ -28,22 +28,18 @@ struct Sections {
     contested: Vec<(String, String, String, String)>,
 }
 
-fn wanted(i: &Item, topics: &[String]) -> bool {
-    topics.is_empty() || i.topics.iter().any(|t| topics.contains(t))
-}
-
 fn by_priority(v: &mut [Item]) {
     v.sort_by(|a, b| {
         (blank(&a.priority, "P9"), &a.created_at).cmp(&(blank(&b.priority, "P9"), &b.created_at))
     });
 }
 
-fn sections(app: &App, topics: &[String]) -> Sections {
+fn sections(app: &App, lens: &Lens) -> Sections {
     let st: State = app.board.read().unwrap().clone();
     let items: Vec<Item> = st
         .items
         .values()
-        .filter(|i| wanted(i, topics))
+        .filter(|i| lens.wanted(i))
         .cloned()
         .collect();
     let live: Vec<&Item> = items.iter().filter(|i| i.status != "done").collect();
@@ -64,10 +60,9 @@ fn sections(app: &App, topics: &[String]) -> Sections {
         .map(|(u, s)| (u.clone(), s.clone()))
         .collect();
     peers.sort_by(|a, b| a.0.cmp(&b.0));
-    let scope = if topics.is_empty() {
-        String::new()
-    } else {
-        format!(" · #{}", topics.join(" #"))
+    let scope = match lens.scope().as_str() {
+        "" => String::new(),
+        t => format!(" · {t}"),
     };
     Sections {
         title: format!(
@@ -111,11 +106,16 @@ fn peer_line(u: &str, s: &PeerStatus) -> String {
 
 /// What just happened, newest first: the log read as prose rather than as
 /// state. A board says how things stand; this says what anyone did.
-pub fn feed(app: &App, limit: usize) -> Vec<(String, String, String, String, String)> {
+///
+/// It carries the text of events, so it goes through the same lens as the
+/// board: a stream of what everyone is doing is the easiest way to walk
+/// around a filter that only ever tidied the item list.
+pub fn feed(app: &App, lens: &Lens, limit: usize) -> Vec<(String, String, String, String, String)> {
     let st = app.board.read().unwrap();
     let mut rows: Vec<(String, String, String, String, String)> = st
         .items
         .values()
+        .filter(|i| lens.wanted(i))
         .flat_map(|i| {
             i.history.iter().map(move |h| {
                 (
@@ -195,8 +195,8 @@ pub fn line(i: &Item) -> String {
     )
 }
 
-pub fn board(app: &App, topics: &[String]) -> String {
-    let s = sections(app, topics);
+pub fn board(app: &App, lens: &Lens) -> String {
+    let s = sections(app, lens);
     let mut out = vec![
         s.title.clone(),
         format!("logs {}", s.logs.join(" · ")),
@@ -232,7 +232,7 @@ pub fn board(app: &App, topics: &[String]) -> String {
             out.push(format!("  {:<18} {:>4} ago{h}", w, ago(at)));
         }
     }
-    let rows = feed(app, 8);
+    let rows = feed(app, lens, 8);
     if !rows.is_empty() {
         out.push("\nrecently".to_string());
         for (at, by, verb, id, text) in &rows {
@@ -320,15 +320,14 @@ pub fn step_line(s: &Step) -> String {
 /// other people have been working at all day — what happened, and who did
 /// it — because that reading runs across items, forwards, in the hours a
 /// person actually lived.
-pub fn day(app: &App, who: &Who, on: chrono::NaiveDate, topics: &[String]) -> String {
+pub fn day(app: &App, who: &Who, on: chrono::NaiveDate, lens: &Lens) -> String {
     let st = app.board.read().unwrap().clone();
-    let steps = crate::day::day(&st, on, &who.name, topics);
+    let steps = crate::day::day(&st, on, &who.name, lens);
     let mine = steps.iter().filter(|s| s.mine).count();
     let hands = crate::day::hands(&steps).len();
-    let scope = if topics.is_empty() {
-        String::new()
-    } else {
-        format!(" · #{}", topics.join(" #"))
+    let scope = match lens.scope().as_str() {
+        "" => String::new(),
+        t => format!(" · {t}"),
     };
     let mut out = vec![format!(
         "the day · {}{scope} · {} step{} · {} yours · {} hand{}",
@@ -350,13 +349,12 @@ pub fn day(app: &App, who: &Who, on: chrono::NaiveDate, topics: &[String]) -> St
 }
 
 /// How it went: where the work waited, counted from the same events.
-pub fn stats(app: &App, days: i64, topics: &[String]) -> String {
+pub fn stats(app: &App, days: i64, lens: &Lens) -> String {
     let st = app.board.read().unwrap().clone();
-    let m = crate::metrics::of(&st, days, topics);
-    let scope = if topics.is_empty() {
-        String::new()
-    } else {
-        format!(" · #{}", topics.join(" #"))
+    let m = crate::metrics::of(&st, days, lens);
+    let scope = match lens.scope().as_str() {
+        "" => String::new(),
+        t => format!(" · {t}"),
     };
     let mut out = vec![format!(
         "how it went · {} day{} to {}{scope} · {} events",
@@ -381,7 +379,7 @@ pub struct Mine {
     pub open: Vec<Item>,
 }
 
-pub fn mine(app: &App, who: &Who, topics: &[String]) -> Mine {
+pub fn mine(app: &App, who: &Who, lens: &Lens) -> Mine {
     let st = app.board.read().unwrap();
     let live: Vec<&Item> = st.items.values().filter(|i| i.status != "done").collect();
     let me = |target: &str| is(&who.name, target);
@@ -398,7 +396,7 @@ pub fn mine(app: &App, who: &Who, topics: &[String]) -> Mine {
             && !(i.status == "asked" && me(&i.asked_of))
     });
     let open = pick(&|i| {
-        i.status == "open" && i.owner.is_empty() && wanted(i, topics) && !i.to.iter().any(|t| me(t))
+        i.status == "open" && i.owner.is_empty() && lens.wanted(i) && !i.to.iter().any(|t| me(t))
     });
     Mine {
         asked,
@@ -410,12 +408,11 @@ pub fn mine(app: &App, who: &Who, topics: &[String]) -> Mine {
 
 /// What an agent should know right now. Budgeted: this lands in a context
 /// window at the start of every session and after every compaction.
-pub fn prime(app: &App, who: &Who, topics: &[String]) -> String {
-    let m = mine(app, who, topics);
-    let scope = if topics.is_empty() {
-        String::new()
-    } else {
-        format!(" · watching #{}", topics.join(" #"))
+pub fn prime(app: &App, who: &Who, lens: &Lens) -> String {
+    let m = mine(app, who, lens);
+    let scope = match lens.scope().as_str() {
+        "" => String::new(),
+        t => format!(" · watching {t}"),
     };
     let mut out = vec![
         format!("kapwa · you are {} on {}{scope}", who.name, app.cfg.writer),
@@ -647,8 +644,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
 "#;
 
 /// Read-only by construction: no forms, no scripts, refreshes itself.
-pub fn page(app: &App, who: &Who) -> Markup {
-    let s = sections(app, &[]);
+pub fn page(app: &App, who: &Who, lens: &Lens) -> Markup {
+    let s = sections(app, lens);
     // held apart because `who` is shadowed further down by who is about
     let me = who.name.clone();
     html! {
@@ -709,7 +706,7 @@ pub fn page(app: &App, who: &Who) -> Markup {
                         }
                     }
                 }
-                @let (on, steps) = crate::day::latest(&app.board.read().unwrap(), &me, &[]);
+                @let (on, steps) = crate::day::latest(&app.board.read().unwrap(), &me, lens);
                 @if !steps.is_empty() {
                     h2 {
                         "the day " small { (on.format("%a %-d %b")) " · " (steps.len()) " steps · "
@@ -737,7 +734,7 @@ pub fn page(app: &App, who: &Who) -> Markup {
                         }
                     }
                 }
-                @let m = crate::metrics::of(&app.board.read().unwrap(), 7, &[]);
+                @let m = crate::metrics::of(&app.board.read().unwrap(), 7, lens);
                 h2 { "how it went " small { (m.days) " days · " (m.events) " events" } }
                 table {
                     @for (label, value) in crate::metrics::rows(&m) {

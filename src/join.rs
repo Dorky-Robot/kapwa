@@ -217,6 +217,7 @@ mod tests {
 
     fn cfg(tmp: &std::path::Path) -> Config {
         Config {
+            private_topics: vec![],
             writer: "t".into(),
             dir: tmp.join("data"),
             port: 0,

@@ -110,6 +110,63 @@ pub fn clean_topic(t: &str) -> Option<String> {
     (!t.is_empty()).then_some(t)
 }
 
+/// What one participant may see of the board, and under what scope.
+///
+/// `topics` narrows: empty means everything, as it always has. `fence`
+/// subtracts, and is the part that is not self-serve — a topic matching one
+/// of its patterns is on no default board, and a key reads it only because
+/// its own line in the agents file names the topic. So a scope asked for in
+/// a query narrows what you see and can never widen it, which is the one
+/// way a fence like this leaks.
+///
+/// It is a lens, not a redaction: fenced events still replicate to every
+/// node, and anyone holding a key that names the topic still reads them.
+/// The point is that clinical work does not land, unasked, in the context
+/// window of every agent that starts a session.
+#[derive(Clone, Debug, Default)]
+pub struct Lens {
+    pub topics: Vec<String>,
+    pub fence: Vec<String>,
+}
+
+impl Lens {
+    /// Everything, fenced by nothing: the view a node with no fence set has
+    /// always had, and what the tests want.
+    #[cfg(test)]
+    pub fn all() -> Lens {
+        Lens::default()
+    }
+
+    /// Narrowed to these topics, fenced by nothing.
+    #[cfg(test)]
+    pub fn under(topics: &[&str]) -> Lens {
+        Lens {
+            topics: topics.iter().map(|t| t.to_string()).collect(),
+            fence: vec![],
+        }
+    }
+
+    pub fn wanted(&self, i: &Item) -> bool {
+        (self.topics.is_empty() || i.topics.iter().any(|t| self.topics.contains(t)))
+            && !i.topics.iter().any(|t| fenced(t, &self.fence))
+    }
+
+    pub fn scope(&self) -> String {
+        if self.topics.is_empty() {
+            String::new()
+        } else {
+            format!("#{}", self.topics.join(" #"))
+        }
+    }
+}
+
+/// Is this topic behind the fence? A pattern matches as a substring, so one
+/// word covers a family of topics without anybody having to list each one
+/// as it is invented — which is the failure mode a fence has to survive.
+pub fn fenced(topic: &str, fence: &[String]) -> bool {
+    fence.iter().any(|p| topic.contains(p.as_str()))
+}
+
 pub fn topics_of(e: &Event) -> Vec<String> {
     match e.get("t") {
         Some(Value::Array(a)) => a
