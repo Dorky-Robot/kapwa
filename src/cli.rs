@@ -493,8 +493,17 @@ pub async fn run(raw: Vec<String>) -> i32 {
                         Ok(())
                     })
                     .is_ok();
+                // a key that is safely on disk must not also go to stdout: JSON
+                // is the default whenever output is piped, so printing it means
+                // every `kapwa join | tee`, every CI log and every agent
+                // transcript keeps a live credential forever. It is emitted
+                // only when there was nowhere to put it, and then it must be.
                 if as_json {
-                    println!("{}", json!({"name": name, "key": key, "saved": saved.then(|| path.display().to_string())}));
+                    println!(
+                        "{}",
+                        json!({"name": name, "saved": saved.then(|| path.display().to_string()),
+                               "key": (!saved).then(|| key.to_string())})
+                    );
                 } else if saved {
                     println!("you are {name} · key saved to {}", path.display());
                     println!("  use it with:  kapwa --me {name} whoami   (or export KAPWA_ME={name})");
