@@ -7,7 +7,10 @@
 //!   often many sessions at once, so a caller may add `X-Kapwa-Tag: ab12`
 //!   and sign as `name/ab12`. The tag is only ever a suffix of the key's
 //!   own name, so nobody can sign as someone else.
-//! - `User`: a person, signed in through Pocket ID. Reads the dashboard.
+//! - `User`: a person, signed in through Pocket ID. Reads the board, and
+//!   writes the three verbs a participant needs to keep a promise: `say`,
+//!   `take`, `done`. Not `ask` — a person with a queue to answer does not
+//!   need a faster way to add to it — and nothing that hands out keys.
 //!
 //! Fail closed: with no mesh token configured, no node can replicate; with
 //! no agents file, no agent can write. Nothing is open by default except
@@ -63,8 +66,21 @@ fn valid_tag(t: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Extractor: `Caller(Some(who))` if the request identified itself.
-pub struct Caller(pub Option<Who>);
+/// Extractor: `who` is `Some` if the request identified itself.
+///
+/// `csrf_ok` is about *how* it identified itself. A bearer token is carried
+/// on purpose by whoever holds it, so a request bearing one is one its
+/// sender meant to make. A cookie is sent by the browser whether or not the
+/// person meant it, so a write over a cookie has to repeat a token only our
+/// own pages can read.
+pub struct Caller {
+    pub who: Option<Who>,
+    pub csrf_ok: bool,
+    /// This session's token, to hand back to the one session that already
+    /// has it. Never for an agent, never logged, never on a page a stranger
+    /// can reach.
+    pub csrf: Option<String>,
+}
 
 #[async_trait]
 impl FromRequestParts<App> for Caller {
@@ -89,17 +105,41 @@ impl FromRequestParts<App> for Caller {
                     w.name = format!("{}/{tag}", w.name);
                 }
             }
-            return Ok(Caller(who));
+            return Ok(Caller {
+                who,
+                csrf_ok: true,
+                csrf: None,
+            });
         }
         let jar = PrivateCookieJar::from_request_parts(parts, app)
             .await
             .unwrap_or_else(|e| match e {});
-        Ok(Caller(crate::oidc::session(&jar).map(|s| Who {
-            kind: Kind::User,
-            name: s.email.unwrap_or(s.name),
-            role: None,
-            topics: None,
-        })))
+        let session = crate::oidc::session(&jar);
+        let csrf_ok = session.as_ref().is_some_and(|s| {
+            !s.csrf.is_empty()
+                && parts
+                    .headers
+                    .get("x-kapwa-csrf")
+                    .and_then(|v| v.to_str().ok())
+                    .is_some_and(|got| constant_time_eq(got.as_bytes(), s.csrf.as_bytes()))
+        });
+        let csrf = session
+            .as_ref()
+            .map(|s| s.csrf.clone())
+            .filter(|c| !c.is_empty());
+        Ok(Caller {
+            csrf,
+            who: session.map(|s| Who {
+                kind: Kind::User,
+                // the name a person is known by here, not the address they
+                // sign in with: `by` goes into an append-only log that is
+                // read by everyone, and an ask is addressed to a name
+                name: s.name,
+                role: None,
+                topics: None,
+            }),
+            csrf_ok,
+        })
     }
 }
 
@@ -108,7 +148,7 @@ impl Caller {
     /// (The Err is a full Response on purpose: handlers return it as-is.)
     #[allow(clippy::result_large_err)]
     pub fn allow(&self, kinds: &[Kind]) -> Result<&Who, Response> {
-        match &self.0 {
+        match &self.who {
             None => Err(deny(
                 StatusCode::UNAUTHORIZED,
                 "identify yourself: Authorization: Bearer <token> (the token is your name)",
@@ -127,6 +167,28 @@ impl Caller {
                 ),
             )),
         }
+    }
+
+    /// The same, for anything that writes. Everything `allow` asks, plus:
+    /// a cookie had to bring a token with it.
+    #[allow(clippy::result_large_err)]
+    pub fn allow_write(&self, kinds: &[Kind]) -> Result<&Who, Response> {
+        let who = self.allow(kinds)?;
+        if !self.csrf_ok {
+            return Err(deny(
+                StatusCode::FORBIDDEN,
+                "a write over a cookie must repeat the session's token: send it as X-Kapwa-CSRF (GET /api/whoami says yours)",
+            ));
+        }
+        Ok(who)
+    }
+
+    /// For a write that arrives as a form, where a header is not on offer:
+    /// the token comes in the body instead, and is checked the same way.
+    pub fn csrf_matches(&self, given: &str) -> bool {
+        self.csrf
+            .as_deref()
+            .is_some_and(|c| !c.is_empty() && constant_time_eq(c.as_bytes(), given.as_bytes()))
     }
 }
 

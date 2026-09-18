@@ -33,6 +33,13 @@ pub struct Session {
     pub subject: String,
     pub name: String,
     pub email: Option<String>,
+    /// Minted at sign-in and never leaves the encrypted cookie except to
+    /// whoever holds it: a write over a cookie must repeat it in a header,
+    /// which another origin cannot read and so cannot repeat. Sessions made
+    /// before this existed have none, and cannot write until they sign in
+    /// again — which is the right way round for a credential.
+    #[serde(default)]
+    pub csrf: String,
 }
 
 /// The in-flight half of a sign-in, held in a short cookie rather than in
@@ -235,6 +242,7 @@ async fn finish(app: &App, jar: &PrivateCookieJar, back: Returned) -> Result<Ses
         subject: claims.subject().as_str().to_string(),
         name,
         email: claims.email().map(|e| e.as_str().to_string()),
+        csrf: crate::join::secret(24),
     })
 }
 

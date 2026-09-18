@@ -641,10 +641,14 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
 .bar{display:flex;justify-content:flex-end;margin-bottom:1rem}
 .in{color:#222;border:1px solid #ccc;border-radius:6px;padding:.2rem .7rem;text-decoration:none;background:#fff}
 .in:hover{border-color:#222}
+.ans{display:flex;gap:.4rem;margin:.4rem 0 .2rem}
+.ans input[type=text]{flex:1;min-width:12rem;font:inherit;padding:.25rem .5rem;border:1px solid #ccc;border-radius:5px}
+.ans button{font:inherit;padding:.25rem .7rem;border:1px solid #ccc;border-radius:5px;background:#fff;cursor:pointer}
+.ans button:hover{border-color:#222}
 "#;
 
 /// Read-only by construction: no forms, no scripts, refreshes itself.
-pub fn page(app: &App, who: &Who, lens: &Lens) -> Markup {
+pub fn page(app: &App, who: &Who, lens: &Lens, csrf: Option<&str>) -> Markup {
     let s = sections(app, lens);
     // held apart because `who` is shadowed further down by who is about
     let me = who.name.clone();
@@ -687,7 +691,21 @@ pub fn page(app: &App, who: &Who, lens: &Lens) -> Markup {
                                     td class={ "who st-" (i.status) } {
                                         @if i.status == "asked" && !i.asked_of.is_empty() { "→ " (i.asked_of) } @else { (blank(&i.owner, "—")) }
                                     }
-                                    td { (i.title) @for t in &i.topics { " " span class="t" { "#" (t) } } }
+                                    td {
+                                        (i.title) @for t in &i.topics { " " span class="t" { "#" (t) } }
+                                        // the one write this page makes: the
+                                        // ask that named you, answered where
+                                        // you read it
+                                        @if let Some(c) = csrf.filter(|_| i.status == "asked" && is(&me, &i.asked_of)) {
+                                            form class="ans" method="post" action="/dash/answer" {
+                                                input type="hidden" name="csrf" value=(c);
+                                                input type="hidden" name="id" value=(i.id);
+                                                input type="text" name="text" placeholder="answer, and say why" required;
+                                                button name="done" value="" { "answer" }
+                                                button name="done" value="1" { "answer · done" }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

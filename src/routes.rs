@@ -9,7 +9,7 @@
 
 use std::hash::{Hash, Hasher};
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{Form, Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
@@ -34,6 +34,7 @@ pub fn router(app: App) -> Router {
         .route("/api/writers", get(writers))
         .route("/api/log/:writer", get(log).post(offered))
         .route("/api/event", post(event))
+        .route("/dash/answer", post(answer))
         .route("/api/join", post(join))
         .route("/api/invite", post(invite))
         .route("/api/rotate", post(rotate))
@@ -101,8 +102,12 @@ async fn dashboard(
     caller: Caller,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    if let Some(who) = &caller.0 {
-        return Html(render::page(&app, who, &wide(&app, who, &None)).into_string()).into_response();
+    if let Some(who) = &caller.who {
+        return Html(
+            render::page(&app, who, &wide(&app, who, &None), caller.csrf.as_deref())
+                .into_string(),
+        )
+        .into_response();
     }
     let wants_html = headers
         .get(header::ACCEPT)
@@ -287,7 +292,7 @@ struct Inviting {
 /// Vouching is an act with a name on it, so it needs a key, and only a
 /// lead's: a worker cannot widen the circle it was let into.
 async fn invite(State(app): State<App>, caller: Caller, Json(i): Json<Inviting>) -> Response {
-    let who = match caller.allow(&[Kind::Agent]) {
+    let who = match caller.allow_write(&[Kind::Agent]) {
         Ok(w) => w.clone(),
         Err(r) => return r,
     };
@@ -331,7 +336,7 @@ struct Rotating {
 /// may rotate anyone's, which is what a leak needs: the holder of a
 /// compromised key is often not the one who notices.
 async fn rotate(State(app): State<App>, caller: Caller, Json(r): Json<Rotating>) -> Response {
-    let who = match caller.allow(&[Kind::Agent]) {
+    let who = match caller.allow_write(&[Kind::Agent]) {
         Ok(w) => w.clone(),
         Err(r) => return r,
     };
@@ -405,8 +410,17 @@ fn mint(app: &App, seed: &str) -> String {
     unreachable!()
 }
 
+/// What a person signed in at the dashboard may write. Not the whole
+/// protocol: a person needs to answer what was asked of them, pick up what
+/// they will do, and say when it is done. `ask` is left out on purpose —
+/// the one participant who cannot be automated is also the one whose queue
+/// everything else lands in, and a faster way to add to it is not what is
+/// missing. `drop` is here but checked below: you may only put down what
+/// you are holding.
+const A_PERSON_MAY: [&str; 4] = ["say", "take", "done", "drop"];
+
 async fn event(State(app): State<App>, caller: Caller, Json(mut attrs): Json<Event>) -> Response {
-    let who = match caller.allow(&[Kind::Agent]) {
+    let who = match caller.allow_write(&[Kind::Agent, Kind::User]) {
         Ok(w) => w.clone(),
         Err(r) => return r,
     };
@@ -416,6 +430,15 @@ async fn event(State(app): State<App>, caller: Caller, Json(mut attrs): Json<Eve
             "an event needs a `kind`: say · take · drop · done · ask",
         );
     };
+    if who.kind == Kind::User && !verb(&kind).is_some_and(|v| A_PERSON_MAY.contains(&v)) {
+        return bad(
+            StatusCode::FORBIDDEN,
+            &format!(
+                "a person writes {}; `{kind}` is an agent's to make",
+                A_PERSON_MAY.join(" · ")
+            ),
+        );
+    }
     let given = attrs
         .get("id")
         .and_then(Value::as_str)
@@ -446,6 +469,24 @@ async fn event(State(app): State<App>, caller: Caller, Json(mut attrs): Json<Eve
             )
         }
     };
+    // A person may put down what they are holding and nothing else. An
+    // agent is trusted to hand work back on somebody's behalf; a browser
+    // is one stray request away from doing it by accident.
+    if who.kind == Kind::User && verb(&kind) == Some("drop") {
+        let held = app
+            .board
+            .read()
+            .unwrap()
+            .items
+            .get(&id)
+            .is_some_and(|i| crate::board::is(&who.name, &i.owner) || i.owner == who.name);
+        if !held {
+            return bad(
+                StatusCode::FORBIDDEN,
+                "you can only drop what you are holding",
+            );
+        }
+    }
     // The fence has a write side, and this is it. The clinical items that
     // started this arrived as an ordinary run of `say` from one key on
     // 2026-09-17 — no importer, just a script with a topic list — so a read
@@ -484,9 +525,74 @@ async fn event(State(app): State<App>, caller: Caller, Json(mut attrs): Json<Eve
     }
 }
 
+/// The one write the read-only page makes, and the whole of why a person
+/// needs one: an ask names you, you read it here, and until now the only
+/// way to answer was a terminal with a key in it. A form cannot set a
+/// header, so the token comes up in the body and is checked the same way.
+///
+/// Nothing else: it answers an ask that named you, and optionally closes
+/// what it answered. Everything a person might want beyond that is
+/// `/api/event`, which takes the same three verbs.
+async fn answer(State(app): State<App>, caller: Caller, Form(f): Form<Answering>) -> Response {
+    let who = match caller.allow(&[Kind::User]) {
+        Ok(w) => w.clone(),
+        Err(r) => return r,
+    };
+    if !caller.csrf_matches(&f.csrf) {
+        return bad(StatusCode::FORBIDDEN, "that form did not come from here");
+    }
+    let text = f.text.trim().to_string();
+    if text.is_empty() {
+        return bad(StatusCode::BAD_REQUEST, "an answer needs words");
+    }
+    let Ok(Some(id)) = resolve(&app, &f.id) else {
+        return bad(StatusCode::NOT_FOUND, "no such item");
+    };
+    // only the ask that named you: the page shows no other form, and a
+    // hand-made post must not find a wider door than the page offers
+    let asked_of_me = app
+        .board
+        .read()
+        .unwrap()
+        .items
+        .get(&id)
+        .is_some_and(|i| i.status == "asked" && crate::board::is(&who.name, &i.asked_of));
+    if !asked_of_me {
+        return bad(StatusCode::FORBIDDEN, "that ask does not name you");
+    }
+    let mut wrote = vec![json!({"kind":"say","id":id,"text":text,"by":who.name})];
+    if f.done.as_deref().is_some_and(|d| !d.is_empty()) {
+        wrote.push(json!({"kind":"done","id":id,"by":who.name}));
+    }
+    for e in wrote {
+        if let Err(e) = app.logs.append_own(e.as_object().unwrap().clone()) {
+            return bad(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+        }
+    }
+    app.refresh_board();
+    axum::response::Redirect::to("/").into_response()
+}
+
+#[derive(Deserialize)]
+struct Answering {
+    id: String,
+    text: String,
+    csrf: String,
+    /// the second button; empty from the first
+    done: Option<String>,
+}
+
 async fn whoami(caller: Caller) -> Response {
     match caller.allow(&[Kind::Mesh, Kind::Agent, Kind::User]) {
-        Ok(w) => Json(w).into_response(),
+        Ok(w) => {
+            let mut v = serde_json::to_value(w).unwrap_or_default();
+            // only ever back to the session that already holds it: this is
+            // how a person learns what their own writes must repeat
+            if let (Some(c), Value::Object(m)) = (&caller.csrf, &mut v) {
+                m.insert("csrf".into(), Value::String(c.clone()));
+            }
+            Json(v).into_response()
+        }
         Err(r) => r,
     }
 }
@@ -1236,6 +1342,162 @@ mod tests {
             serde_json::from_str::<Value>(&body).unwrap()["event"]["by"],
             "claude"
         );
+    }
+
+    /// A signed-in person, exactly as a completed sign-in leaves one.
+    fn signed_in(app: &App, name: &str, csrf: &str) -> String {
+        use axum_extra::extract::cookie::{Cookie, PrivateCookieJar};
+        let mut c = Cookie::new(
+            "_kapwa_session",
+            json!({"subject": "s", "name": name, "csrf": csrf}).to_string(),
+        );
+        c.set_path("/");
+        PrivateCookieJar::new(app.key.clone())
+            .add(c)
+            .into_response()
+            .headers()
+            .get_all(axum::http::header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().split(';').next().unwrap().to_string())
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+
+    fn as_person(cookie: &str, csrf: Option<&str>, body: Value) -> Request<Body> {
+        let mut b = Request::post("/api/event")
+            .header("cookie", cookie)
+            .header("content-type", "application/json");
+        if let Some(c) = csrf {
+            b = b.header("x-kapwa-csrf", c);
+        }
+        b.body(Body::from(body.to_string())).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_person_answers_what_was_asked_of_them_and_does_no_agent_s_work() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = app(tmp.path());
+        let cookie = signed_in(&app, "felix", "tok");
+
+        // an agent asks a person, which until now was a dead letter
+        say(&app, "claude-key", json!({"kind":"say","id":"q","text":"A or B?","t":["roof"]})).await;
+        say(&app, "claude-key", json!({"kind":"ask","id":"q","to":"felix","text":"A or B?"})).await;
+        assert_eq!(app.board.read().unwrap().items["q"].status, "asked");
+
+        // the cookie alone is not enough: a browser sends it whether or not
+        // the person meant to send anything
+        let (st, body) = call(&app, as_person(&cookie, None, json!({"kind":"say","id":"q","text":"B"}))).await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
+        let (st, _) = call(&app, as_person(&cookie, Some("wrong"), json!({"kind":"say","id":"q","text":"B"}))).await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+        // and the token is only ever handed to the session that holds it
+        let (_, body) = call(
+            &app,
+            Request::get("/api/whoami").header("cookie", &cookie).body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert!(body.contains("\"csrf\":\"tok\""), "{body}");
+        let (_, body) = call(&app, get_req("/api/whoami", Some("claude-key"))).await;
+        assert!(!body.contains("csrf"), "an agent has no session to protect: {body}");
+
+        // with it, the ask is answered, and by the name the ask named
+        let (st, body) = call(&app, as_person(&cookie, Some("tok"), json!({"kind":"say","id":"q","text":"B"}))).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let item = app.board.read().unwrap().items["q"].clone();
+        assert_ne!(item.status, "asked", "the ask is freed");
+        assert!(item.history.iter().any(|h| h.by == "felix"), "{item:?}");
+
+        // take and done are a person's too
+        for k in ["take", "done"] {
+            let (st, body) = call(&app, as_person(&cookie, Some("tok"), json!({"kind":k,"id":"q"}))).await;
+            assert_eq!(st, StatusCode::OK, "{k}: {body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_page_answers_an_ask_that_named_you_and_no_other() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = app(tmp.path());
+        let cookie = signed_in(&app, "felix", "tok");
+        say(&app, "claude-key", json!({"kind":"say","id":"q","text":"A or B?","t":["roof"]})).await;
+        say(&app, "claude-key", json!({"kind":"ask","id":"q","to":"felix","text":"A or B?"})).await;
+        say(&app, "claude-key", json!({"kind":"say","id":"o","text":"not yours","t":["roof"]})).await;
+        say(&app, "claude-key", json!({"kind":"ask","id":"o","to":"ana","text":"well?"})).await;
+
+        let form = |cookie: &str, body: &str| {
+            Request::post("/dash/answer")
+                .header("cookie", cookie)
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        // the page carries the token, and only to the person signed in
+        let (_, page) = call(
+            &app,
+            Request::get("/").header("cookie", &cookie).header("accept", "text/html").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert!(page.contains("/dash/answer") && page.contains("tok"), "{page}");
+
+        assert_eq!(
+            call(&app, form(&cookie, "csrf=no&id=q&text=B")).await.0,
+            StatusCode::FORBIDDEN,
+            "a form from somewhere else is not a form from here"
+        );
+        // an ask that named somebody else is not yours to close
+        assert_eq!(
+            call(&app, form(&cookie, "csrf=tok&id=o&text=B")).await.0,
+            StatusCode::FORBIDDEN
+        );
+        let (st, _) = call(&app, form(&cookie, "csrf=tok&id=q&text=B%2C+because+the+roof&done=1")).await;
+        assert_eq!(st, StatusCode::SEE_OTHER);
+        let item = app.board.read().unwrap().items["q"].clone();
+        assert_eq!(item.status, "done");
+        assert!(
+            item.history.iter().any(|h| h.by == "felix" && h.text.as_deref() == Some("B, because the roof")),
+            "{item:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_person_is_not_an_agent_and_cannot_do_an_agent_s_work() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = app(tmp.path());
+        let cookie = signed_in(&app, "felix", "tok");
+        say(&app, "claude-key", json!({"kind":"say","id":"q","text":"a thing","t":["roof"]})).await;
+
+        // no asking: the one participant who cannot be automated does not
+        // need a faster way to fill their own queue
+        let (st, body) = call(&app, as_person(&cookie, Some("tok"), json!({"kind":"ask","id":"q","to":"claude"}))).await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
+        assert!(body.contains("agent's to make"), "{body}");
+
+        // nor putting down what somebody else is holding
+        say(&app, "claude-key", json!({"kind":"take","id":"q"})).await;
+        let (st, body) = call(&app, as_person(&cookie, Some("tok"), json!({"kind":"drop","id":"q"}))).await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(app.board.read().unwrap().items["q"].owner, "claude");
+
+        // nor handing out keys, which is where a stolen session would hurt
+        for (path, body) in [
+            ("/api/invite", json!({"name":"someone"})),
+            ("/api/rotate", json!({"name":"claude"})),
+        ] {
+            let req = Request::post(path)
+                .header("cookie", &cookie)
+                .header("x-kapwa-csrf", "tok")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            assert_eq!(call(&app, req).await.0, StatusCode::FORBIDDEN, "{path}");
+        }
+
+        // what they may drop is their own
+        say(&app, "claude-key", json!({"kind":"drop","id":"q"})).await;
+        let (st, _) = call(&app, as_person(&cookie, Some("tok"), json!({"kind":"take","id":"q"}))).await;
+        assert_eq!(st, StatusCode::OK);
+        let (st, body) = call(&app, as_person(&cookie, Some("tok"), json!({"kind":"drop","id":"q"}))).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
     }
 
     #[tokio::test]

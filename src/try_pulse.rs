@@ -74,7 +74,13 @@ pub fn data(app: &App) -> Value {
         }
     }
 
-    let flow: Vec<Value> = days
+    let first_live = days
+        .iter()
+        .position(|d| opened.contains_key(d) || finished.contains_key(d))
+        .unwrap_or(0);
+    // keep a little run-up so a single busy day is not a lone dot
+    let start = first_live.saturating_sub(1).min(days.len().saturating_sub(2));
+    let flow: Vec<Value> = days[start..]
         .iter()
         .map(|d| {
             json!({
@@ -106,6 +112,7 @@ pub fn data(app: &App) -> Value {
     // who has dealt with whom: an item addressed to someone is an edge from
     // whoever opened it. Undirected weight is what the picture needs.
     let mut edge: BTreeMap<(String, String), u32> = BTreeMap::new();
+    #[allow(clippy::type_complexity)]
     for i in st.items.values() {
         for t in &i.to {
             if t.is_empty() || t == &i.created_by {
@@ -132,6 +139,13 @@ pub fn data(app: &App) -> Value {
         *party
             .entry(name.split('/').next().unwrap_or(name).to_string())
             .or_default() += n;
+    }
+    for e in &edges {
+        for k in ["a", "b"] {
+            if let Some(n) = e[k].as_str() {
+                party.entry(n.to_string()).or_insert(0);
+            }
+        }
     }
     let mut parties: Vec<Value> = party
         .into_iter()
@@ -301,7 +315,7 @@ main{max-width:1180px;margin:0 auto;padding:20px;display:flex;flex-direction:col
 .row:hover{background:var(--surface-2)}
 .row.ask{background:color-mix(in srgb,var(--accent) 9%,transparent)}
 .row .t{color:var(--text-muted)}
-.row .w{color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis}
+.row .w{color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row .v{color:var(--text-muted)}
 .row.ask .v{color:var(--accent);font-weight:600}
 .row .x{color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -415,15 +429,16 @@ function asks() {
   const el = $('#asks'); if (!el) return;
   const a = D.asks;
   if (!a.length) { el.innerHTML = '<div class="empty">Nothing is waiting on a person.</div>'; return; }
-  const W = 900, rowH = 26, H = a.length * rowH + 8, L = 250, R = 56;
+  const W = 900, rowH = 26, H = a.length * rowH + 8, L = 260, R = 56;
   const max = Math.max(1, ...a.map(d => d.hours));
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Hours each ask has waited">
     ${a.map((d, i) => {
       const w = (W - L - R) * d.hours / max, yy = i * rowH + 4;
       return `<g class="bar" data-i="${i}">
         <rect x="0" y="${yy}" width="${W}" height="${rowH - 2}" fill="transparent"/>
-        <text x="0" y="${yy + 14}" font-size="12" fill="var(--text-secondary)">${esc(d.id)}</text>
-        <text x="62" y="${yy + 14}" font-size="12" fill="var(--text-muted)">→ ${esc(d.to)}</text>
+        <text x="0" y="${yy + 14}" font-size="12" fill="var(--text-secondary)">${esc(
+          d.id.length > 20 ? d.id.slice(0, 19) + '…' : d.id)}</text>
+        <text x="152" y="${yy + 14}" font-size="12" fill="var(--text-muted)">→ ${esc(d.to)}</text>
         <rect x="${L}" y="${yy + 3}" width="${Math.max(3, w)}" height="${rowH - 11}"
           rx="4" fill="var(--series-1)"/>
         <text x="${L + Math.max(3, w) + 8}" y="${yy + 14}" font-size="12"
