@@ -219,7 +219,7 @@ pub fn page(app: &App, which: &str) -> Markup {
                     @if panel {
                         section class="kpi" id="kpi" {}
                         section class="card" {
-                            h2 { "Opened against finished" span class="sub" { "fourteen days" } }
+                            h2 { "Opened against finished" span class="sub" id="span" {} }
                             div id="flow" {}
                         }
                         section class="card" {
@@ -352,7 +352,7 @@ function kpi() {
     <div class="k">${esc(label)}</div>${why ? `<div class="why">${esc(why)}</div>` : ''}</div>`;
   el.innerHTML =
     t(k.open, 'open right now', `${k.done} finished, ever`) +
-    t(k.opened14 + ' / ' + k.finished14, 'opened / finished', 'over fourteen days') +
+    t(k.opened14 + ' / ' + k.finished14, 'opened / finished', `over ${D.flow.length} days`) +
     t(k.asks, 'waiting on a person', k.oldest ? `oldest ${k.oldest}h` : '') +
     t(k.writers, 'writers', `${k.events} events`);
 }
@@ -361,7 +361,7 @@ function hero() {
   const el = $('#hero'); if (!el) return;
   const k = D.kpi, ratio = k.finished14 ? (k.opened14 / k.finished14).toFixed(1) : '∞';
   el.innerHTML = `<div class="big">${k.opened14} opened · ${k.finished14} finished</div>
-    <div class="say">Fourteen days. We open <strong>${ratio}×</strong> as fast as we close, and
+    <div class="say">${D.flow.length} days. We open <strong>${ratio}×</strong> as fast as we close, and
     ${k.asks} item${k.asks === 1 ? '' : 's'} ${k.asks === 1 ? 'is' : 'are'} waiting on a person
     ${k.oldest ? `— the oldest for ${k.oldest} hours` : ''}.</div>`;
 }
@@ -370,6 +370,8 @@ function hero() {
 // point; the grid recedes; the crosshair reads both at once.
 function flow() {
   const el = $('#flow'); if (!el) return;
+  const span = $('#span'); if (span) span.textContent =
+    D.flow.length + (D.flow.length === 1 ? ' day' : ' days') + ' — every day we have existed';
   const f = D.flow, W = 900, H = 260, L = 34, R = 78, T = 14, B = 26;
   const max = Math.max(4, ...f.map(d => Math.max(d.opened, d.finished)));
   const x = i => L + (W - L - R) * (f.length < 2 ? 0 : i / (f.length - 1));

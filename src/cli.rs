@@ -28,7 +28,8 @@ kapwa — what participants owe each other
   kapwa topics              what topics are in use; look before inventing
   kapwa mine                what waits on me, what I hold
   kapwa show <id>           one item and its history
-  kapwa prime               what an agent should know right now
+  kapwa prime               what an agent should know right now       [--wait]
+  kapwa mine --hook         a line, but only if somebody tapped you
   kapwa how                 how this works, for someone new (open to anyone)
   kapwa whoami
 
@@ -44,6 +45,7 @@ kapwa — what participants owe each other
            with none, a new item goes to a topic named after you, so it is
            never on everybody's board by accident
   --wait   (take) wait one sync, then answer CLAIMED · LOST to x
+           (prime) hold until what involves you changes, or a few minutes pass
   --tag    sign as <name>/<tag>: one session of many (or KAPWA_TAG).
            call yourself something a person can read — `--tag dashboard`
            beats a hash. the hook names you after where you are working
@@ -339,6 +341,12 @@ const SETUP_CLAUDE: &str = r#"{
     "SessionStart": [{
       "matcher": "startup|resume|compact",
       "hooks": [{ "type": "command", "command": "kapwa prime --hook" }]
+    }],
+    "Stop": [{
+      "hooks": [{ "type": "command", "command": "kapwa mine --hook" }]
+    }],
+    "Notification": [{
+      "hooks": [{ "type": "command", "command": "kapwa mine --hook" }]
     }]
   }
 }"#;
@@ -422,7 +430,16 @@ pub async fn run(raw: Vec<String>) -> i32 {
                 }
             }
             ("prime", []) => {
-                let got = node.get(&format!("/api/prime.txt{}", scope(&a))).await;
+                // a session that is already running never sees a tap, because
+                // it read its prime at the start and has no reason to look
+                // again. --wait is the other way round: ask once, and be told
+                let q = if a.wait {
+                    let sep = if a.t.is_empty() { "?" } else { "&" };
+                    format!("{}{sep}wait=240", scope(&a))
+                } else {
+                    scope(&a)
+                };
+                let got = node.get(&format!("/api/prime.txt{q}")).await;
                 if a.hook {
                     // a hook must never break the session it starts: say
                     // nothing rather than fail
@@ -552,6 +569,41 @@ pub async fn run(raw: Vec<String>) -> i32 {
                     println!("{out}");
                 } else {
                     print!("{out}");
+                }
+            }
+            ("mine", []) if a.hook => {
+                // For a hook that fires often: say nothing at all unless
+                // something arrived from somebody else. What you hold is
+                // deliberately not a reason to speak — you already know, and a
+                // line that prints every time is a line everyone learns to
+                // skip, which is the failure this is trying to avoid.
+                let v: Value =
+                    serde_json::from_str(&node.get(&format!("/api/mine{}", scope(&a))).await?)
+                        .unwrap_or_default();
+                let n = |k: &str| v[k].as_array().map(Vec::len).unwrap_or(0);
+                let (asked, said) = (n("asked"), n("said_to"));
+                if asked + said > 0 {
+                    let mut parts = vec![];
+                    if asked > 0 {
+                        parts.push(format!("{asked} asked of you"));
+                    }
+                    if said > 0 {
+                        parts.push(format!("{said} said to you"));
+                    }
+                    println!("kapwa · {} · `kapwa mine` for what", parts.join(" · "));
+                    for i in v["asked"]
+                        .as_array()
+                        .into_iter()
+                        .chain(v["said_to"].as_array())
+                        .flatten()
+                        .take(3)
+                    {
+                        println!(
+                            "  {} {}",
+                            i["id"].as_str().unwrap_or(""),
+                            i["title"].as_str().unwrap_or("")
+                        );
+                    }
                 }
             }
             ("mine", []) => {

@@ -601,6 +601,8 @@ async fn whoami(caller: Caller) -> Response {
 struct Scope {
     /// topics, comma-separated; absent means the key's own, else everything
     t: Option<String>,
+    /// seconds to hold the connection open for, waiting for this to change
+    wait: Option<u64>,
 }
 
 /// What to show this caller when they did not say. A key watches the topics
@@ -688,10 +690,44 @@ async fn topics_in_use(State(app): State<App>, caller: Caller) -> Response {
     )
 }
 
+/// What involves you — and, with `?wait=N`, what involves you *next*.
+///
+/// A tap is delivered by pull, so a session that is already running never
+/// notices one: it saw its prime at the start and has no reason to look
+/// again. This is the smallest thing that fixes that without anyone
+/// growing a push channel. Hold the request open; answer the moment this
+/// caller's own prime reads differently; answer 204 if the time runs out
+/// and it does not. Nothing is broadcast, nobody is written to, and a
+/// client that never asks is unaffected.
+///
+/// 204 rather than an unchanged body on purpose: a hook that prints
+/// nothing costs nothing, and "no news" should not spend a context window
+/// to say so.
 async fn prime_txt(State(app): State<App>, caller: Caller, Query(q): Query<Scope>) -> Response {
-    match caller.allow(&[Kind::Agent, Kind::User]) {
-        Ok(w) => text(render::prime(&app, w, &lens(&app, w, &q.t))),
-        Err(r) => r,
+    let who = match caller.allow(&[Kind::Agent, Kind::User]) {
+        Ok(w) => w.clone(),
+        Err(r) => return r,
+    };
+    let lens = lens(&app, &who, &q.t);
+    let read = || render::prime(&app, &who, &lens);
+    let Some(secs) = q.wait else {
+        return text(read());
+    };
+    let was = read();
+    let until = tokio::time::Instant::now()
+        + std::time::Duration::from_secs(secs.clamp(1, 300));
+    loop {
+        let left = until.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            return StatusCode::NO_CONTENT.into_response();
+        }
+        // the board ticking is the wake-up, not the answer: most changes
+        // are somebody else's, and this caller's prime says so by not moving
+        app.changed(left).await;
+        let now = read();
+        if now != was {
+            return text(now);
+        }
     }
 }
 
@@ -1412,6 +1448,38 @@ mod tests {
             let (st, body) = call(&app, as_person(&cookie, Some("tok"), json!({"kind":k,"id":"q"}))).await;
             assert_eq!(st, StatusCode::OK, "{k}: {body}");
         }
+    }
+
+    #[tokio::test]
+    async fn waiting_on_prime_answers_when_you_are_tapped_and_not_when_somebody_else_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = app(tmp.path());
+
+        // nothing arrives, and the answer is 204: a hook that prints nothing
+        // spends nothing saying there is no news
+        let (st, body) = call(&app, get_req("/api/prime.txt?wait=1", Some("claude-key"))).await;
+        assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
+
+        // a tap for somebody else does not wake you, though the board moved
+        say(&app, "ana-key", json!({"kind":"say","id":"z","text":"for ana","t":["taxes"]})).await;
+        let (st, _) = call(&app, get_req("/api/prime.txt?wait=1", Some("claude-key"))).await;
+        assert_eq!(st, StatusCode::NO_CONTENT);
+
+        // a tap for you does, and the body is the prime you would have got
+        let waiting = {
+            let app = app.clone();
+            tokio::spawn(async move {
+                call(&app, get_req("/api/prime.txt?wait=30", Some("claude-key"))).await
+            })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        say(&app, "ana-key", json!({"kind":"say","id":"y","text":"the roof again","t":["roof"],"to":"claude"})).await;
+        let (st, body) = tokio::time::timeout(std::time::Duration::from_secs(10), waiting)
+            .await
+            .expect("a tap should end the wait")
+            .unwrap();
+        assert_eq!(st, StatusCode::OK);
+        assert!(body.contains("the roof again"), "{body}");
     }
 
     #[tokio::test]
