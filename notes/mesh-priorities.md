@@ -18,17 +18,17 @@ has a write side as well as a read one.
 
 | gate | where |
 | --- | --- |
-| `Lens { topics, fence }`, and `fenced()` | `src/board.rs:113`, `src/board.rs:158` |
-| which patterns stay shut for a caller | `src/routes.rs:559` (`fence`) |
-| narrow scope · wide scope | `src/routes.rs:572` (`lens`), `src/routes.rs:580` (`wide`) |
-| the write side | `src/routes.rs:420` |
-| `KAPWA_PRIVATE_TOPICS` | `src/config.rs:37`, `src/config.rs:120` |
-| test | `src/routes.rs:1067` |
+| `Lens { topics, fence }`, and `fenced()` | `src/board.rs:127`, `src/board.rs:166` |
+| which patterns stay shut for a caller | `src/routes.rs:633` (`fence`) |
+| narrow scope · wide scope | `src/routes.rs:644` (`lens`), `src/routes.rs:654` (`wide`) |
+| the write side | `src/routes.rs:490` |
+| `KAPWA_PRIVATE_TOPICS` | `src/config.rs:39`, `src/config.rs:131` |
+| test | `src/routes.rs:1572` |
 
 Every surface that carries item text goes through the lens, because each one
 was a way around a filter applied only to the board: `prime`, `board`, `mine`
-(`src/render.rs:394`), the feed (`src/render.rs:113`), the raw fold and an
-item by id (`src/routes.rs:718`, `src/routes.rs:735`), the day, the stats,
+(`src/render.rs:399`), the feed (`src/render.rs:113`), the raw fold and an
+item by id (`src/routes.rs:815`, `src/routes.rs:828`), the day, the stats,
 and the sandbox pages.
 
 **Why it is configuration and not a list of words in the source.** CLAUDE.md
@@ -69,12 +69,12 @@ a bigger one.
 
 | gate | where |
 | --- | --- |
-| what a person may write | `src/routes.rs:407` (`A_PERSON_MAY`), `src/routes.rs:422` |
-| drop only what you hold | `src/routes.rs:441` |
-| CSRF, header or form field | `src/auth.rs:113`, `src/auth.rs:174`, `src/auth.rs:189` |
-| the token, back to its own session | `src/routes.rs:499` (`whoami`) |
-| the one form on the page | `src/routes.rs:448` (`answer`), `src/render.rs:691` |
-| tests | `src/routes.rs:951`, `src/routes.rs:1016`, `src/routes.rs:990` |
+| what a person may write | `src/routes.rs:420` (`A_PERSON_MAY`), `src/routes.rs:433` |
+| drop only what you hold | `src/routes.rs:475` |
+| CSRF, header or form field | `src/auth.rs:118`, `src/auth.rs:175`, `src/auth.rs:188` |
+| the token, back to its own session | `src/routes.rs:585` (`whoami`) |
+| the one form on the page | `src/routes.rs:536` (`answer`), `src/render.rs:730` |
+| tests | `src/routes.rs:1413`, `src/routes.rs:1531`, `src/routes.rs:1486` |
 
 `say`, `take`, `done`, and `drop` of what you hold. Not `ask` — the one
 participant who cannot be automated is also the one whose queue everything
@@ -82,7 +82,7 @@ lands in. Not `invite` or `rotate`, which is where a stolen session would
 actually cost something.
 
 **A person now writes under their Pocket ID username, not their email**
-(`src/auth.rs:127`). Two reasons: an ask addressed to `felix` would never
+(`src/auth.rs:137`). Two reasons: an ask addressed to `felix` would never
 have matched `felix@…`, and `by` goes into an append-only log that everyone
 on the mesh reads and nobody can edit. **Check that the username in Pocket ID
 is the name the asks use** — if it is not, answering will write under the
@@ -105,11 +105,11 @@ pull like everything else, so nobody sees it until the next session.
 
 | gate | where |
 | --- | --- |
-| `?wait=N` long-poll | `src/routes.rs:604` |
-| `kapwa prime --wait` | `src/cli.rs:437` |
-| `kapwa mine --hook` | `src/cli.rs:588` |
-| hooks `kapwa setup claude` prints | `src/cli.rs:338` |
-| test | `src/routes.rs:1035` |
+| `?wait=N` long-poll | `src/routes.rs:706` |
+| `kapwa prime --wait` | `src/cli.rs:432` |
+| `kapwa mine --hook` | `src/cli.rs:574` |
+| hooks `kapwa setup claude` prints | `src/cli.rs:339` |
+| test | `src/routes.rs:1454` |
 
 Two ways in, both pull, neither writing anything:
 
