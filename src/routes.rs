@@ -106,7 +106,10 @@ async fn dashboard(
         .is_some_and(|a| a.contains("text/html"));
     if let Some(who) = &caller.who {
         if q.data.is_some() {
-            return Json(try_pulse::data(&app)).into_response();
+            return match &q.who {
+                Some(w) => Json(try_pulse::pov(&app, w)).into_response(),
+                None => Json(try_pulse::data(&app)).into_response(),
+            };
         }
         if !wants_html {
             return text(render::board(&app, &wide(&app, who, &None)));
@@ -859,6 +862,8 @@ async fn item(State(app): State<App>, caller: Caller, Path(id): Path<String>) ->
 #[derive(Deserialize)]
 struct AsData {
     data: Option<String>,
+    /// one participant, from where they stand
+    who: Option<String>,
 }
 
 /// The page, or the numbers it draws. One route, because the page refreshes
@@ -874,7 +879,10 @@ async fn pulse_page(
         Err(r) => return r,
     };
     if q.data.is_some() {
-        return Json(try_pulse::data(&app)).into_response();
+        return match &q.who {
+            Some(w) => Json(try_pulse::pov(&app, w)).into_response(),
+            None => Json(try_pulse::data(&app)).into_response(),
+        };
     }
     let me = (who.kind == Kind::User)
         .then(|| caller.csrf.as_deref().map(|c| (who.name.as_str(), c)))

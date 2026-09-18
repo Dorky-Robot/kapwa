@@ -200,6 +200,119 @@ pub fn data(app: &App) -> Value {
 
 /// The picture, and — for a person signed in — the one thing a picture of
 /// what is waiting on you is useless without: somewhere to answer it.
+/// One participant, from where they stand. The ring says who deals with
+/// whom; this says what that has actually consisted of — what they are
+/// holding, what is waiting on them, what they last did, and every name
+/// they sign with, which is the only way to tell one session from five.
+pub fn pov(app: &App, who: &str) -> Value {
+    let base = |s: &str| s.split('/').next().unwrap_or(s).to_string();
+    let st = app.board.read().unwrap();
+    let evs = app.logs.all();
+    let now = chrono::Utc::now();
+
+    let mut counts: BTreeMap<&str, u32> = BTreeMap::new();
+    let mut sessions: BTreeMap<String, String> = BTreeMap::new();
+    let mut mine: Vec<&crate::log::Event> = vec![];
+    for e in &evs {
+        let by = e.get("by").and_then(Value::as_str).unwrap_or("");
+        if base(by) != who {
+            continue;
+        }
+        let kind = e.get("kind").and_then(Value::as_str).unwrap_or("");
+        if let Some(v) = crate::board::verb(kind) {
+            *counts.entry(v).or_default() += 1;
+        }
+        let at = e
+            .get("at")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        sessions
+            .entry(by.to_string())
+            .and_modify(|a| {
+                if at > *a {
+                    *a = at.clone()
+                }
+            })
+            .or_insert(at);
+        mine.push(e);
+    }
+
+    let row = |i: &crate::board::Item, age: bool| {
+        json!({"id": i.id, "title": clip(&i.title, 78),
+               "hours": age.then(|| hours_since(&i.updated_at, now))})
+    };
+    let holds: Vec<Value> = st
+        .items
+        .values()
+        .filter(|i| i.status == "taken" && base(&i.owner) == who)
+        .map(|i| row(i, false))
+        .collect();
+    let mut waiting: Vec<Value> = st
+        .items
+        .values()
+        .filter(|i| i.status == "asked" && base(&i.asked_of) == who)
+        .map(|i| row(i, true))
+        .collect();
+    waiting.sort_by_key(|a| -a["hours"].as_i64().unwrap_or(0));
+    let asked_out: Vec<Value> = st
+        .items
+        .values()
+        .filter(|i| i.status == "asked" && base(&i.asked_by) == who && base(&i.asked_of) != who)
+        .map(|i| row(i, true))
+        .collect();
+
+    let mut with: BTreeMap<String, u32> = BTreeMap::new();
+    for i in st.items.values() {
+        let opener = base(&i.created_by);
+        for to in &i.to {
+            let t = base(to);
+            if opener == who && t != who {
+                *with.entry(t).or_default() += 1;
+            } else if t == who && opener != who {
+                *with.entry(opener.clone()).or_default() += 1;
+            }
+        }
+    }
+    let mut with: Vec<Value> = with
+        .into_iter()
+        .map(|(n, c)| json!({"name": n, "n": c}))
+        .collect();
+    with.sort_by_key(|w| -(w["n"].as_i64().unwrap_or(0)));
+
+    let recent: Vec<Value> = mine.iter().rev().take(14).map(|e| json!({
+        "at": e.get("at").and_then(Value::as_str).unwrap_or(""),
+        "by": e.get("by").and_then(Value::as_str).unwrap_or(""),
+        "verb": crate::board::verb(e.get("kind").and_then(Value::as_str).unwrap_or("")).unwrap_or(""),
+        "id": e.get("id").and_then(Value::as_str).unwrap_or(""),
+        "text": clip(e.get("text").and_then(Value::as_str).unwrap_or(""), 120),
+    })).collect();
+
+    let mut sessions: Vec<Value> = sessions
+        .into_iter()
+        .map(|(n, at)| json!({"name": n, "last": at}))
+        .collect();
+    sessions.sort_by(|a, b| b["last"].as_str().cmp(&a["last"].as_str()));
+
+    json!({
+        "name": who,
+        "said": counts.get("say").copied().unwrap_or(0),
+        "took": counts.get("take").copied().unwrap_or(0),
+        "finished": counts.get("done").copied().unwrap_or(0),
+        "asked": counts.get("ask").copied().unwrap_or(0),
+        "events": mine.len(),
+        "last": recent.first().map(|r| r["at"].clone()).unwrap_or(Value::Null),
+        // somebody who has never written but is asked of is a participant too
+        "silent": mine.is_empty(),
+        "sessions": sessions,
+        "holds": holds,
+        "waiting": waiting,
+        "asked_out": asked_out,
+        "with": with,
+        "recent": recent,
+    })
+}
+
 pub fn page(app: &App, which: &str, me: Option<(&str, &str)>) -> Markup {
     let d = data(app);
     let panel = which == "panel";
@@ -302,6 +415,10 @@ pub fn page(app: &App, which: &str, me: Option<(&str, &str)>) -> Markup {
                         div id="table" {}
                     }
                 }
+                aside id="pov" class="pov" hidden {
+                    button id="povx" type="button" aria-label="close" { "×" }
+                    div id="povbody" {}
+                }
                 script type="application/json" id="seed" { (PreEscaped(d.to_string())) }
                 script { (PreEscaped(JS)) }
             }
@@ -394,6 +511,36 @@ summary{cursor:pointer;color:var(--text-secondary);font-size:13px}
 .ans button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .ans button:hover{filter:brightness(1.08)}
 .empty{color:var(--text-muted);font-size:13px;padding:8px 0}
+.node,.who{cursor:pointer}
+.node:hover circle{stroke:var(--accent)}
+.who:hover{text-decoration:underline}
+.pov{position:fixed;top:0;right:0;bottom:0;width:min(560px,100vw);z-index:30;overflow:auto;
+  background:var(--surface-1);border-left:1px solid var(--line);
+  box-shadow:-10px 0 40px rgba(0,0,0,.18);padding:22px 24px 40px}
+.pov[hidden]{display:none}
+#povx{position:absolute;top:14px;right:16px;background:transparent;border:0;cursor:pointer;
+  color:var(--text-muted);font-size:24px;line-height:1;padding:4px 8px}
+#povx:hover{color:var(--text-primary)}
+.pov h3{margin:0;font-size:22px;letter-spacing:-.01em}
+.pov .who-sub{color:var(--text-muted);font-size:13px;margin-top:3px}
+.pov .tallies{display:flex;flex-wrap:wrap;gap:16px;margin:16px 0 4px;
+  font-variant-numeric:tabular-nums}
+.pov .tallies div{min-width:64px}
+.pov .tallies b{display:block;font-size:20px;font-weight:600}
+.pov .tallies span{font-size:11.5px;color:var(--text-muted)}
+.pov h4{margin:20px 0 7px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--text-secondary)}
+.pov ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
+.pov li{display:flex;gap:9px;font-size:13px;align-items:baseline}
+.pov li .mid{font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text-muted);
+  flex:0 0 auto}
+.pov li .tt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pov li .age{margin-left:auto;color:var(--accent);flex:0 0 auto;font-size:12px}
+.pov .chips{display:flex;flex-wrap:wrap;gap:6px}
+.pov .chip{background:var(--surface-2);border:1px solid var(--line);border-radius:999px;
+  padding:3px 10px;font-size:12.5px;cursor:pointer}
+.pov .chip:hover{border-color:var(--accent)}
+.pov .none{color:var(--text-muted);font-size:13px}
 "#;
 
 const JS: &str = r#"
@@ -550,6 +697,7 @@ function ring() {
   </svg>`;
   el.querySelectorAll('.node').forEach(g => {
     const x = p[+g.dataset.i];
+    g.addEventListener('click', () => openPov(x.name));
     const mates = e.filter(z => z.a === x.name || z.b === x.name)
       .map(z => (z.a === x.name ? z.b : z.a) + ' ×' + z.n);
     g.addEventListener('pointermove', ev => show(ev,
@@ -566,10 +714,73 @@ function feed() {
   el.innerHTML = D.feed.map(f => {
     const t = f.at.slice(11, 16);
     return `<div class="row${f.verb === 'ask' ? ' ask' : ''}"><span class="t">${esc(t)}</span
-      ><span class="w">${esc(f.by)}</span><span class="v">${esc(f.verb)}</span
+      ><span class="w who" data-who="${esc(f.by.split('/')[0])}">${esc(f.by)}</span
+      ><span class="v">${esc(f.verb)}</span
       ><span class="x">${esc(f.text || f.id)}</span></div>`;
   }).join('');
+  el.querySelectorAll('.who').forEach(w =>
+    w.addEventListener('click', () => openPov(w.dataset.who)));
 }
+
+// One participant, from where they stand. Fetched rather than folded into
+// the page, because twenty-one of these would be most of the payload and
+// nobody opens twenty-one.
+async function openPov(name) {
+  const box = $('#pov'), body = $('#povbody');
+  box.hidden = false;
+  body.innerHTML = `<h3>${esc(name)}</h3><div class="who-sub">reading the log…</div>`;
+  let v;
+  try {
+    const r = await fetch(`${location.pathname}?data=1&who=${encodeURIComponent(name)}`,
+      {headers: {accept: 'application/json'}, credentials: 'same-origin'});
+    if (!r.ok) throw new Error(r.status);
+    v = await r.json();
+  } catch (e) {
+    body.innerHTML = `<h3>${esc(name)}</h3><div class="who-sub">could not read that (${esc(e.message)})</div>`;
+    return;
+  }
+  const when = v.last ? new Date(v.last).toLocaleString() : 'never';
+  const list = (rows, age) => rows.length
+    ? `<ul>${rows.map(r => `<li><span class="mid">${esc(r.id)}</span>
+        <span class="tt">${esc(r.title)}</span>
+        ${age && r.hours != null ? `<span class="age">${r.hours}h</span>` : ''}</li>`).join('')}</ul>`
+    : '<div class="none">nothing</div>';
+  body.innerHTML = `
+    <h3>${esc(v.name)}</h3>
+    <div class="who-sub">${v.silent
+      ? 'has never written here — known only by what is addressed to them'
+      : 'last spoke ' + esc(when)}</div>
+    <div class="tallies">
+      <div><b>${v.said}</b><span>said</span></div>
+      <div><b>${v.took}</b><span>took</span></div>
+      <div><b>${v.finished}</b><span>finished</span></div>
+      <div><b>${v.asked}</b><span>asked</span></div>
+      <div><b>${v.waiting.length}</b><span>waiting on them</span></div>
+    </div>
+    <h4>Waiting on them</h4>${list(v.waiting, true)}
+    <h4>Holding</h4>${list(v.holds, false)}
+    <h4>They are waiting on someone</h4>${list(v.asked_out, true)}
+    <h4>Deals with</h4>${v.with.length
+      ? `<div class="chips">${v.with.map(w =>
+          `<span class="chip" data-who="${esc(w.name)}">${esc(w.name)} ×${w.n}</span>`).join('')}</div>`
+      : '<div class="none">nobody yet</div>'}
+    <h4>Signs as</h4>${v.sessions.length
+      ? `<div class="chips">${v.sessions.map(s =>
+          `<span class="chip">${esc(s.name)}</span>`).join('')}</div>`
+      : '<div class="none">no sessions</div>'}
+    <h4>Lately</h4>${v.recent.length
+      ? `<div class="feed">${v.recent.map(r => `<div class="row${r.verb === 'ask' ? ' ask' : ''}">
+          <span class="t">${esc(r.at.slice(11, 16))}</span><span class="w">${esc(r.by)}</span>
+          <span class="v">${esc(r.verb)}</span>
+          <span class="x">${esc(r.text || r.id)}</span></div>`).join('')}</div>`
+      : '<div class="none">nothing yet</div>'}`;
+  body.querySelectorAll('.chip[data-who]').forEach(c =>
+    c.addEventListener('click', () => openPov(c.dataset.who)));
+}
+
+const closePov = () => { $('#pov').hidden = true; };
+$('#povx').addEventListener('click', closePov);
+addEventListener('keydown', e => e.key === 'Escape' && closePov());
 
 function table() {
   const el = $('#table'); if (!el) return;
