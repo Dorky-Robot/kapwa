@@ -168,6 +168,49 @@ pub fn add_key(cfg: &Config, name: &str, role: &str, topics: &str) -> std::io::R
     Ok(token)
 }
 
+/// Give an existing agent a new token, keeping its name, role and topics.
+/// The old one stops working the moment this returns, because the file is
+/// read per request — there is no window where both are good.
+///
+/// Rewritten whole rather than edited in place: the file is small, and a
+/// half-written credential file locks everyone out of the node at once.
+pub fn rotate_key(cfg: &Config, name: &str) -> std::io::Result<String> {
+    let body = std::fs::read_to_string(&cfg.agents_file)?;
+    let token = secret(24);
+    let mut found = false;
+    let out: Vec<String> = body
+        .lines()
+        .map(|l| {
+            let mut p: Vec<&str> = l.split(':').collect();
+            if l.trim_start().starts_with('#') || p.len() < 2 || p[0].trim() != name {
+                return l.to_string();
+            }
+            found = true;
+            p[1] = &token;
+            p.join(":")
+        })
+        .collect();
+    if !found {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("no agent called `{name}` here"),
+        ));
+    }
+    let tmp = cfg.agents_file.with_extension("rotating");
+    {
+        let mut f = File::create(&tmp)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        }
+        writeln!(f, "{}", out.join("\n"))?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, &cfg.agents_file)?;
+    Ok(token)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,6 +267,32 @@ mod tests {
             "",
             "and it is swept"
         );
+    }
+
+    #[test]
+    fn rotating_replaces_one_token_and_disturbs_nothing_else() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cfg(tmp.path());
+        std::fs::write(
+            &c.agents_file,
+            "# keys\nana:ana-key:lead:*\nbob:bob-key:worker:a2p,roof\ncar:car-key:worker:*\n",
+        )
+        .unwrap();
+        let fresh = rotate_key(&c, "bob").unwrap();
+        let body = std::fs::read_to_string(&c.agents_file).unwrap();
+        // the old one is gone, the new one is there, and it is still bob
+        assert!(!body.contains("bob-key"), "the old token must not survive");
+        assert!(body.contains(&format!("bob:{fresh}:worker:a2p,roof")));
+        // nobody else moved, and the comment stayed
+        assert!(body.contains("# keys"));
+        assert!(body.contains("ana:ana-key:lead:*") && body.contains("car:car-key:worker:*"));
+        // rotating twice never gives the same token back
+        assert_ne!(fresh, rotate_key(&c, "bob").unwrap());
+        // and a name that is not here is an error, not a silent no-op
+        assert!(rotate_key(&c, "nobody").is_err());
+        assert!(!std::fs::read_to_string(&c.agents_file)
+            .unwrap()
+            .contains("nobody"));
     }
 
     #[test]

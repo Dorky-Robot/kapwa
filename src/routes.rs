@@ -36,6 +36,7 @@ pub fn router(app: App) -> Router {
         .route("/api/event", post(event))
         .route("/api/join", post(join))
         .route("/api/invite", post(invite))
+        .route("/api/rotate", post(rotate))
         .route("/api/whoami", get(whoami))
         .route("/api/prime.txt", get(prime_txt))
         .route("/api/board.txt", get(board_txt))
@@ -315,6 +316,52 @@ async fn invite(State(app): State<App>, caller: Caller, Json(i): Json<Inviting>)
         i.hours.unwrap_or(24),
     );
     Json(json!({"ok": true, "invite": inv.token, "name": inv.name, "role": inv.role, "topics": inv.topics, "until": inv.until, "by": who.name})).into_response()
+}
+
+#[derive(Deserialize)]
+struct Rotating {
+    name: Option<String>,
+}
+
+/// Replace a key that should not be trusted any more. Anyone may always
+/// rotate their own — a key you suspect is a key you should be able to
+/// replace without asking permission first, or nobody will do it. A lead
+/// may rotate anyone's, which is what a leak needs: the holder of a
+/// compromised key is often not the one who notices.
+async fn rotate(State(app): State<App>, caller: Caller, Json(r): Json<Rotating>) -> Response {
+    let who = match caller.allow(&[Kind::Agent]) {
+        Ok(w) => w.clone(),
+        Err(r) => return r,
+    };
+    // the name comes from the key unless one is given, so the common case
+    // — rotating your own — cannot name somebody else by accident
+    let name = r.name.unwrap_or_else(|| who.name.clone());
+    if name != who.name && who.role.as_deref() != Some("lead") {
+        return bad(
+            StatusCode::FORBIDDEN,
+            "only a lead may rotate somebody else's key; your own needs no permission",
+        );
+    }
+    match enrol::rotate_key(&app.cfg, &name) {
+        Ok(token) => {
+            // the board records that it happened, and never what it is
+            let _ = app.logs.append_own(
+                serde_json::from_value(json!({
+                    "kind": "say",
+                    "id": format!("rotated-{name}"),
+                    "text": format!("{name}'s key was rotated by {}; the old one no longer works", who.name),
+                    "t": ["kapwa"],
+                }))
+                .unwrap_or_default(),
+            );
+            app.refresh_board();
+            Json(json!({"ok": true, "name": name, "key": token})).into_response()
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            bad(StatusCode::NOT_FOUND, &e.to_string())
+        }
+        Err(e) => bad(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
 }
 
 // ── agents ─────────────────────────────────────────────────────────
@@ -949,6 +996,80 @@ mod tests {
         assert!(
             board.contains("bot joined") && board.contains("scribe joined"),
             "{board}"
+        );
+    }
+
+    /// A leaked key has to be replaceable by the person who noticed, which
+    /// is not always the one holding it.
+    #[tokio::test]
+    async fn a_key_can_be_replaced_by_its_owner_or_by_a_lead() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = app(tmp.path());
+
+        // your own, with no name and nobody's permission
+        let (st, out) = call(&app, post_req("/api/rotate", "claude-key", json!({}))).await;
+        assert_eq!(st, StatusCode::OK, "{out}");
+        let fresh = serde_json::from_str::<Value>(&out).unwrap()["key"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        // the old key is dead the moment it is replaced, the new one works
+        let (st, _) = call(&app, get_req("/api/whoami", Some("claude-key"))).await;
+        assert_eq!(
+            st,
+            StatusCode::UNAUTHORIZED,
+            "the leaked key must stop working"
+        );
+        let (st, who) = call(&app, get_req("/api/whoami", Some(&fresh))).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(
+            serde_json::from_str::<Value>(&who).unwrap()["name"],
+            "claude"
+        );
+
+        // a worker may not rotate somebody else's out from under them
+        let (st, _) = call(
+            &app,
+            post_req("/api/rotate", &fresh, json!({"name": "ana"})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+        let (st, _) = call(&app, get_req("/api/whoami", Some("ana-key"))).await;
+        assert_eq!(st, StatusCode::OK, "ana's key must be untouched");
+
+        // a lead may, which is what a leak needs
+        let (st, out) = call(
+            &app,
+            post_req("/api/rotate", "ana-key", json!({"name": "claude"})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{out}");
+        let (st, _) = call(&app, get_req("/api/whoami", Some(&fresh))).await;
+        assert_eq!(st, StatusCode::UNAUTHORIZED);
+
+        // a stranger, and a name that is not here
+        assert_eq!(
+            call(&app, post_req("/api/rotate", "nope", json!({})))
+                .await
+                .0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            call(
+                &app,
+                post_req("/api/rotate", "ana-key", json!({"name": "ghost"}))
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
+
+        // it is on the board, and the board never holds the secret
+        let (_, board) = call(&app, get_req("/api/board.txt", Some("ana-key"))).await;
+        assert!(board.contains("rotated"), "{board}");
+        assert!(
+            !board.contains(&fresh),
+            "a secret must never reach the board"
         );
     }
 
