@@ -443,7 +443,12 @@ pub async fn run(raw: Vec<String>) -> i32 {
                 if a.hook {
                     // a hook must never break the session it starts: say
                     // nothing rather than fail
-                    if let Ok(mut text) = got {
+                    // and with --wait, an empty body is the node saying
+                    // nothing arrived: no news is not worth a context window
+                    if let Ok(mut text) = got.map(|t| t.trim_end().to_string()) {
+                        if text.is_empty() {
+                            return Ok(0);
+                        }
                         if let Some(tag) = &hook_tag {
                             text += &format!(
                                 "\nyou are {tag} here: pass --tag {tag} to every kapwa command, or export KAPWA_TAG={tag} once.\nthe name is yours to choose — anything short and human (--tag dashboard) is better than the default.\n"
@@ -689,7 +694,7 @@ pub async fn run(raw: Vec<String>) -> i32 {
                 done(&node.event(body).await?, as_json, "asked");
             }
             ("setup", [what]) if what == "claude" => {
-                println!("# add to ~/.claude/settings.json (merge with any hooks you have).\n# it puts `kapwa prime` into every session at start, on resume, and\n# again after compaction, so the board survives long sessions.\n{SETUP_CLAUDE}");
+                println!("# add to ~/.claude/settings.json (merge with any hooks you have).\n# it puts `kapwa prime` into every session at start, on resume, and\n# again after compaction, so the board survives long sessions.\n#\n# the other two are for the rest of the session: a tap arrives by pull,\n# so a session already running would not otherwise notice one. they print\n# nothing at all unless somebody asked you something or said something to\n# you, which is why they can afford to run every turn.\n{SETUP_CLAUDE}");
             }
             ("say" | "take" | "drop" | "done" | "ask" | "show" | "setup" | "join" | "invite", _) => return Ok(usage(&format!("`{cmd}` wants different arguments"))),
             (other, _) => return Ok(usage(&format!("unknown command `{other}`"))),

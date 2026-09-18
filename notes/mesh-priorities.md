@@ -131,6 +131,25 @@ avoid, not a smaller version of it.
 
 No Slack, no broadcast on write, nothing pushed to any agent.
 
+## What was actually run
+
+A throwaway node on `:3519` beside the live one, with
+`KAPWA_PRIVATE_TOPICS=everyday,clinical,port` and two keys — `wide` on `*`
+and `vet` on `everyday,clinical-records`. Observed:
+
+- `wide` primes and sees only the unfenced item; `?t=everyday` returns it
+  nothing; `/api/item/rx` answers `no such item`; tagging `everyday` is
+  refused with `#everyday is private on this node, and your key does not
+  name it`. `vet` reads the same item twice over (board and feed).
+- `?wait=2` with nothing arriving: `204` after 2.02s. `?wait=20` tapped one
+  second in: `200` at 1.03s, carrying `said to you (1)`.
+- `kapwa mine --hook` printed one line for the tapped key and **nothing at
+  all** for the untapped one, exit 0 both times.
+- `kapwa prime --wait` still holding at 2s, and printed the tap when it came.
+
+`cargo test` 49 passed, `cargo clippy --all-targets -- -D warnings` silent.
+The node on `:3410` was not restarted, reconfigured or written to.
+
 ## Not done
 
 - **`kapwa setup claude` is printed, not installed.** Merging it into
