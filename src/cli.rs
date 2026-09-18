@@ -216,7 +216,25 @@ impl Node {
         .await
     }
 
-    async fn event(&self, body: Value) -> Result<Value, Fail> {
+    /// Whatever the environment says this participant is, carried along on
+    /// anything it writes. kapwa keeps unknown fields and ignores them, so
+    /// this needs no protocol and means nothing here: it is the participant
+    /// describing itself, in its own words, for whoever reads the log.
+    /// Riding on events that were happening anyway is deliberate — a
+    /// heartbeat would be a second kind of traffic and a board full of
+    /// "still here".
+    async fn event(&self, mut body: Value) -> Result<Value, Fail> {
+        if let Some(s) = std::env::var("KAPWA_SELF")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+        {
+            match serde_json::from_str::<Value>(&s) {
+                Ok(v) if v.is_object() => {
+                    body["self"] = v;
+                }
+                _ => return Err(Fail::No("KAPWA_SELF must be a JSON object".into())),
+            }
+        }
         let out = self
             .send(
                 self.http

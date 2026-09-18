@@ -210,6 +210,7 @@ pub fn pov(app: &App, who: &str) -> Value {
     let evs = app.logs.all();
     let now = chrono::Utc::now();
 
+    let mut itself: Option<(String, Value)> = None;
     let mut counts: BTreeMap<&str, u32> = BTreeMap::new();
     let mut sessions: BTreeMap<String, String> = BTreeMap::new();
     let mut mine: Vec<&crate::log::Event> = vec![];
@@ -227,6 +228,13 @@ pub fn pov(app: &App, who: &str) -> Value {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
+        // kapwa does not know what any of these words mean and does not need
+        // to: it shows the latest one back, verbatim
+        if let Some(s) = e.get("self").filter(|v| v.is_object()) {
+            if itself.as_ref().is_none_or(|(prev, _)| at > *prev) {
+                itself = Some((at.clone(), s.clone()));
+            }
+        }
         sessions
             .entry(by.to_string())
             .and_modify(|a| {
@@ -304,6 +312,8 @@ pub fn pov(app: &App, who: &str) -> Value {
         "last": recent.first().map(|r| r["at"].clone()).unwrap_or(Value::Null),
         // somebody who has never written but is asked of is a participant too
         "silent": mine.is_empty(),
+        "self": itself.as_ref().map(|(_, v)| v.clone()),
+        "self_at": itself.as_ref().map(|(a, _)| a.clone()),
         "sessions": sessions,
         "holds": holds,
         "waiting": waiting,
@@ -541,6 +551,11 @@ summary{cursor:pointer;color:var(--text-secondary);font-size:13px}
   padding:3px 10px;font-size:12.5px;cursor:pointer}
 .pov .chip:hover{border-color:var(--accent)}
 .pov .none{color:var(--text-muted);font-size:13px}
+.selft{width:100%;font-size:13px}
+.selft th{width:38%;font-weight:400;color:var(--text-muted);vertical-align:top;
+  padding:3px 10px 3px 0;border:0;text-align:left}
+.selft td{padding:3px 0;border:0;font-variant-numeric:tabular-nums}
+.asof{color:var(--text-muted);font-size:11.5px;margin-top:5px}
 "#;
 
 const JS: &str = r#"
@@ -764,6 +779,10 @@ async function openPov(name) {
       ? `<div class="chips">${v.with.map(w =>
           `<span class="chip" data-who="${esc(w.name)}">${esc(w.name)} ×${w.n}</span>`).join('')}</div>`
       : '<div class="none">nobody yet</div>'}
+    ${v.self ? `<h4>Says of itself</h4>
+      <table class="selft">${Object.entries(v.self).map(([k, val]) =>
+        `<tr><th>${esc(k)}</th><td>${esc(val)}</td></tr>`).join('')}</table>
+      <div class="asof">as of ${esc(new Date(v.self_at).toLocaleString())}</div>` : ''}
     <h4>Signs as</h4>${v.sessions.length
       ? `<div class="chips">${v.sessions.map(s =>
           `<span class="chip">${esc(s.name)}</span>`).join('')}</div>`
