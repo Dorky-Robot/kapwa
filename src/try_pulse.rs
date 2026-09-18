@@ -198,9 +198,26 @@ pub fn data(app: &App) -> Value {
     })
 }
 
-pub fn page(app: &App, which: &str) -> Markup {
+/// The picture, and — for a person signed in — the one thing a picture of
+/// what is waiting on you is useless without: somewhere to answer it.
+pub fn page(app: &App, which: &str, me: Option<(&str, &str)>) -> Markup {
     let d = data(app);
     let panel = which == "panel";
+    // only the asks that named you. The form is server-rendered rather than
+    // drawn by the live redraw, so an answer half-typed when somebody else
+    // writes to the board does not vanish under the person typing it.
+    let yours: Vec<(String, String)> = match me {
+        Some((name, _)) => app
+            .board
+            .read()
+            .unwrap()
+            .items
+            .values()
+            .filter(|i| i.status == "asked" && crate::board::is(name, &i.asked_of))
+            .map(|i| (i.id.clone(), clip(&i.title, 96)))
+            .collect(),
+        None => vec![],
+    };
     html! {
         (DOCTYPE)
         html lang="en" {
@@ -216,11 +233,36 @@ pub fn page(app: &App, which: &str) -> Markup {
                     nav {
                         a href="/" class=[(!panel).then_some("on")] { "pulse" }
                         a href="/panel" class=[panel.then_some("on")] { "panel" }
-                        a href="/board" { "the board" }
                     }
                     span id="live" class="live" { "connecting…" }
                 }
                 main {
+                    @if let Some((_, tok)) = me {
+                        @if !yours.is_empty() {
+                            section class="card yours" {
+                                h2 {
+                                    "Yours to answer"
+                                    span class="sub" { (yours.len()) " waiting on you" }
+                                }
+                                @for (id, title) in &yours {
+                                    details class="ans" {
+                                        summary { span class="aid" { (id) } " " (title) }
+                                        form method="post" action="/dash/answer" {
+                                            input type="hidden" name="csrf" value=(tok);
+                                            input type="hidden" name="id" value=(id);
+                                            textarea name="text" rows="2"
+                                                placeholder="your answer — it goes on the board as a note" {}
+                                            div class="btns" {
+                                                button type="submit" { "answer" }
+                                                button type="submit" name="done" value="1"
+                                                    class="primary" { "answer and close" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     @if panel {
                         section class="kpi" id="kpi" {}
                         section class="card" {
@@ -253,7 +295,6 @@ pub fn page(app: &App, which: &str) -> Markup {
                                 span class="sub" { "longest first" }
                             }
                             div id="asks" {}
-                            a class="more" href="/board" { "answer these on the board →" }
                         }
                     }
                     details class="card" {
@@ -339,8 +380,19 @@ table{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:
 th,td{text-align:left;padding:5px 10px;border-bottom:1px solid var(--line)}
 th{color:var(--text-secondary);font-weight:600}
 summary{cursor:pointer;color:var(--text-secondary);font-size:13px}
-.more{display:inline-block;margin-top:10px;color:var(--accent);text-decoration:none;font-size:13px}
-.more:hover{text-decoration:underline}
+.yours{border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
+.ans{border-top:1px solid var(--line);padding:7px 0}
+.ans:first-of-type{border-top:0}
+.ans summary{color:var(--text-primary);font-size:13.5px}
+.aid{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text-muted);margin-right:6px}
+.ans form{display:flex;flex-direction:column;gap:8px;padding:10px 0 4px}
+.ans textarea{width:100%;background:var(--surface-2);color:var(--text-primary);
+  border:1px solid var(--line);border-radius:7px;padding:8px 10px;font:inherit;resize:vertical}
+.btns{display:flex;gap:8px}
+.ans button{border:1px solid var(--line);background:var(--surface-2);color:var(--text-primary);
+  border-radius:7px;padding:6px 13px;font:inherit;cursor:pointer}
+.ans button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.ans button:hover{filter:brightness(1.08)}
 .empty{color:var(--text-muted);font-size:13px;padding:8px 0}
 "#;
 

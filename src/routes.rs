@@ -55,7 +55,6 @@ pub fn router(app: App) -> Router {
         // a sandbox, until one of them is picked
         .route("/panel", get(|s, c, q| pulse_page(s, c, q, "panel")))
         .route("/pulse", get(|s, c, q| pulse_page(s, c, q, "pulse")))
-        .route("/board", get(board_page))
         .fallback(|| async {
             (
                 StatusCode::NOT_FOUND,
@@ -112,7 +111,10 @@ async fn dashboard(
         if !wants_html {
             return text(render::board(&app, &wide(&app, who, &None)));
         }
-        return Html(try_pulse::page(&app, "pulse").into_string()).into_response();
+        let me = (who.kind == Kind::User)
+            .then(|| caller.csrf.as_deref().map(|c| (who.name.as_str(), c)))
+            .flatten();
+        return Html(try_pulse::page(&app, "pulse", me).into_string()).into_response();
     }
     if wants_html {
         Html(render::front_door(&app, app.cfg.oidc.is_some()).into_string()).into_response()
@@ -861,28 +863,23 @@ struct AsData {
 
 /// The page, or the numbers it draws. One route, because the page refreshes
 /// itself from the same URL it was served from when the live stream fires.
-async fn board_page(State(app): State<App>, caller: Caller) -> Response {
-    let who = match caller.allow(&[Kind::Agent, Kind::User]) {
-        Ok(w) => w.clone(),
-        Err(r) => return r,
-    };
-    Html(render::page(&app, &who, &wide(&app, &who, &None), caller.csrf.as_deref()).into_string())
-        .into_response()
-}
-
 async fn pulse_page(
     State(app): State<App>,
     caller: Caller,
     Query(q): Query<AsData>,
     which: &'static str,
 ) -> Response {
-    if let Err(r) = caller.allow(&[Kind::Agent, Kind::User]) {
-        return r;
-    }
+    let who = match caller.allow(&[Kind::Agent, Kind::User]) {
+        Ok(w) => w.clone(),
+        Err(r) => return r,
+    };
     if q.data.is_some() {
         return Json(try_pulse::data(&app)).into_response();
     }
-    Html(try_pulse::page(&app, which).into_string()).into_response()
+    let me = (who.kind == Kind::User)
+        .then(|| caller.csrf.as_deref().map(|c| (who.name.as_str(), c)))
+        .flatten();
+    Html(try_pulse::page(&app, which, me).into_string()).into_response()
 }
 
 /// What just happened, newest first. An agent coming back after a while
@@ -1573,7 +1570,7 @@ mod tests {
         // the page carries the token, and only to the person signed in
         let (_, page) = call(
             &app,
-            Request::get("/board")
+            Request::get("/")
                 .header("cookie", &cookie)
                 .header("accept", "text/html")
                 .body(Body::empty())
@@ -1925,15 +1922,14 @@ mod tests {
             .unwrap();
         let (st, body) = call(&app, req).await;
         assert_eq!(st, StatusCode::OK);
-        assert!(body.contains("Who deals with whom"), "the picture, not the list");
         assert!(
-            body.contains("href=\"/board\""),
-            "the picture must reach the board"
+            body.contains("Who deals with whom"),
+            "the picture, not the list"
         );
-        // and the board is still there, whole
-        let (st, body) = call(&app, get_req("/board", Some("claude-key"))).await;
-        assert_eq!(st, StatusCode::OK);
-        assert!(body.contains("read-only"));
+        assert!(
+            body.contains("href=\"/panel\""),
+            "and reach the other arrangement"
+        );
         // a browser: a page that says what this is, never a bounce to sign-in
         let req = Request::get("/")
             .header("accept", "text/html,application/xhtml+xml")

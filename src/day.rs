@@ -170,6 +170,9 @@ pub fn day(st: &State, on: NaiveDate, me: &str, lens: &Lens) -> Vec<Step> {
 /// Today — unless nothing has happened yet today, and then the last day
 /// that did have something. A board opened first thing in the morning
 /// should show the day it is catching you up on, not a blank.
+// lost its only caller when the read-only board page was removed; left
+// here rather than deleted, since whoever wrote it may still want it
+#[allow(dead_code)]
 pub fn latest(st: &State, me: &str, lens: &Lens) -> (NaiveDate, Vec<Step>) {
     let all = walk(st, me, lens);
     let today = Local::now().date_naive();
@@ -291,7 +294,10 @@ mod tests {
         ]);
         let d17 = NaiveDate::from_ymd_opt(2026, 9, 17).unwrap();
         assert_eq!(day(&st, d17, "me", &Lens::all()).len(), 1);
-        assert_eq!(day(&st, d17.pred_opt().unwrap(), "me", &Lens::all()).len(), 1);
+        assert_eq!(
+            day(&st, d17.pred_opt().unwrap(), "me", &Lens::all()).len(),
+            1
+        );
         assert!(day(&st, d17, "me", &Lens::under(&["fence"])).len() == 1);
         assert!(day(&st, d17, "me", &Lens::under(&["roof"])).is_empty());
     }
