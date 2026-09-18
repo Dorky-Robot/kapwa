@@ -21,7 +21,6 @@ mod puller;
 mod render;
 mod routes;
 mod try_pulse;
-mod try_ui;
 
 use std::sync::{Arc, Mutex, RwLock};
 

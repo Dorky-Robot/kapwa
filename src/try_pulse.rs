@@ -44,7 +44,11 @@ pub fn data(app: &App) -> Value {
     const SPAN: i64 = 14;
     let days: Vec<String> = (0..SPAN)
         .rev()
-        .map(|i| (now - chrono::Duration::days(i)).format("%Y-%m-%d").to_string())
+        .map(|i| {
+            (now - chrono::Duration::days(i))
+                .format("%Y-%m-%d")
+                .to_string()
+        })
         .collect();
     let mut opened: BTreeMap<String, u32> = BTreeMap::new();
     let mut finished: BTreeMap<String, u32> = BTreeMap::new();
@@ -79,7 +83,9 @@ pub fn data(app: &App) -> Value {
         .position(|d| opened.contains_key(d) || finished.contains_key(d))
         .unwrap_or(0);
     // keep a little run-up so a single busy day is not a lone dot
-    let start = first_live.saturating_sub(1).min(days.len().saturating_sub(2));
+    let start = first_live
+        .saturating_sub(1)
+        .min(days.len().saturating_sub(2));
     let flow: Vec<Value> = days[start..]
         .iter()
         .map(|d| {
@@ -208,10 +214,9 @@ pub fn page(app: &App, which: &str) -> Markup {
                 header {
                     span class="brand" { "kapwa" }
                     nav {
-                        a href="/try/panel" class=[panel.then_some("on")] { "panel" }
-                        a href="/try/pulse" class=[(!panel).then_some("on")] { "pulse" }
-                        a href="/try/" { "dashboard" }
-                        a href="/" { "the board" }
+                        a href="/" class=[(!panel).then_some("on")] { "pulse" }
+                        a href="/panel" class=[panel.then_some("on")] { "panel" }
+                        a href="/board" { "the board" }
                     }
                     span id="live" class="live" { "connecting…" }
                 }
@@ -243,8 +248,12 @@ pub fn page(app: &App, which: &str) -> Markup {
                             }
                         }
                         section class="card" {
-                            h2 { "What is waiting on a person" span class="sub" { "longest first" } }
+                            h2 {
+                                "What is waiting on a person"
+                                span class="sub" { "longest first" }
+                            }
                             div id="asks" {}
+                            a class="more" href="/board" { "answer these on the board →" }
                         }
                     }
                     details class="card" {
@@ -330,6 +339,8 @@ table{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:
 th,td{text-align:left;padding:5px 10px;border-bottom:1px solid var(--line)}
 th{color:var(--text-secondary);font-weight:600}
 summary{cursor:pointer;color:var(--text-secondary);font-size:13px}
+.more{display:inline-block;margin-top:10px;color:var(--accent);text-decoration:none;font-size:13px}
+.more:hover{text-decoration:underline}
 .empty{color:var(--text-muted);font-size:13px;padding:8px 0}
 "#;
 
@@ -524,7 +535,8 @@ draw();
 let pending = null;
 async function refresh() {
   try {
-    const r = await fetch(location.pathname + '?data=1', {headers: {accept: 'application/json'}});
+    const r = await fetch(location.pathname + '?data=1',
+      {headers: {accept: 'application/json'}, credentials: 'same-origin'});
     if (!r.ok) return;
     D = await r.json(); draw();
   } catch (_) {}

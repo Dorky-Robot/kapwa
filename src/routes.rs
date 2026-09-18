@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use crate::auth::{Caller, Kind, Who};
 use crate::board::{clean_topic, verb, Lens};
 use crate::log::Event;
-use crate::{join as enrol, oidc, render, try_pulse, try_ui, App};
+use crate::{join as enrol, oidc, render, try_pulse, App};
 
 pub fn router(app: App) -> Router {
     Router::new()
@@ -53,11 +53,9 @@ pub fn router(app: App) -> Router {
         .route("/api/topics", get(topics_in_use))
         .route("/api/live", get(live))
         // a sandbox, until one of them is picked
-        .route("/try/", get(|s, c| try_page(s, c, "index")))
-        .route("/try/constellation", get(|s, c| try_page(s, c, "c")))
-        .route("/try/panel", get(|s, c, q| pulse_page(s, c, q, "panel")))
-        .route("/try/pulse", get(|s, c, q| pulse_page(s, c, q, "pulse")))
-        .route("/try/rail", get(|s, c| try_page(s, c, "r")))
+        .route("/panel", get(|s, c, q| pulse_page(s, c, q, "panel")))
+        .route("/pulse", get(|s, c, q| pulse_page(s, c, q, "pulse")))
+        .route("/board", get(board_page))
         .fallback(|| async {
             (
                 StatusCode::NOT_FOUND,
@@ -100,19 +98,22 @@ async fn protocol(State(app): State<App>) -> Response {
 async fn dashboard(
     State(app): State<App>,
     caller: Caller,
+    Query(q): Query<AsData>,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    if let Some(who) = &caller.who {
-        return Html(
-            render::page(&app, who, &wide(&app, who, &None), caller.csrf.as_deref())
-                .into_string(),
-        )
-        .into_response();
-    }
     let wants_html = headers
         .get(header::ACCEPT)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|a| a.contains("text/html"));
+    if let Some(who) = &caller.who {
+        if q.data.is_some() {
+            return Json(try_pulse::data(&app)).into_response();
+        }
+        if !wants_html {
+            return text(render::board(&app, &wide(&app, who, &None)));
+        }
+        return Html(try_pulse::page(&app, "pulse").into_string()).into_response();
+    }
     if wants_html {
         Html(render::front_door(&app, app.cfg.oidc.is_some()).into_string()).into_response()
     } else {
@@ -714,8 +715,7 @@ async fn prime_txt(State(app): State<App>, caller: Caller, Query(q): Query<Scope
         return text(read());
     };
     let was = read();
-    let until = tokio::time::Instant::now()
-        + std::time::Duration::from_secs(secs.clamp(1, 300));
+    let until = tokio::time::Instant::now() + std::time::Duration::from_secs(secs.clamp(1, 300));
     loop {
         let left = until.saturating_duration_since(tokio::time::Instant::now());
         if left.is_zero() {
@@ -790,7 +790,12 @@ async fn stats(State(app): State<App>, caller: Caller, Query(q): Query<StatsQ>) 
     };
     let who = &who;
     let st = app.board.read().unwrap().clone();
-    Json(crate::metrics::of(&st, q.days.unwrap_or(7), &wide(&app, who, &q.t))).into_response()
+    Json(crate::metrics::of(
+        &st,
+        q.days.unwrap_or(7),
+        &wide(&app, who, &q.t),
+    ))
+    .into_response()
 }
 
 async fn stats_txt(State(app): State<App>, caller: Caller, Query(q): Query<StatsQ>) -> Response {
@@ -799,7 +804,11 @@ async fn stats_txt(State(app): State<App>, caller: Caller, Query(q): Query<Stats
         Err(r) => return r,
     };
     let who = &who;
-    text(render::stats(&app, q.days.unwrap_or(7), &wide(&app, who, &q.t)))
+    text(render::stats(
+        &app,
+        q.days.unwrap_or(7),
+        &wide(&app, who, &q.t),
+    ))
 }
 
 async fn mine(State(app): State<App>, caller: Caller, Query(q): Query<Scope>) -> Response {
@@ -852,6 +861,15 @@ struct AsData {
 
 /// The page, or the numbers it draws. One route, because the page refreshes
 /// itself from the same URL it was served from when the live stream fires.
+async fn board_page(State(app): State<App>, caller: Caller) -> Response {
+    let who = match caller.allow(&[Kind::Agent, Kind::User]) {
+        Ok(w) => w.clone(),
+        Err(r) => return r,
+    };
+    Html(render::page(&app, &who, &wide(&app, &who, &None), caller.csrf.as_deref()).into_string())
+        .into_response()
+}
+
 async fn pulse_page(
     State(app): State<App>,
     caller: Caller,
@@ -865,23 +883,6 @@ async fn pulse_page(
         return Json(try_pulse::data(&app)).into_response();
     }
     Html(try_pulse::page(&app, which).into_string()).into_response()
-}
-
-async fn try_page(State(app): State<App>, caller: Caller, which: &'static str) -> Response {
-    let who = match caller.allow(&[Kind::Agent, Kind::User]) {
-        Ok(w) => w.clone(),
-        Err(r) => return r,
-    };
-    let lens = &wide(&app, &who, &None);
-    Html(
-        match which {
-            "c" => try_ui::constellation(&app, lens),
-            "r" => try_ui::rail(&app, lens),
-            _ => try_ui::dashboard(&app, lens),
-        }
-        .into_string(),
-    )
-    .into_response()
 }
 
 /// What just happened, newest first. An agent coming back after a while
@@ -1416,28 +1417,64 @@ mod tests {
         let cookie = signed_in(&app, "felix", "tok");
 
         // an agent asks a person, which until now was a dead letter
-        say(&app, "claude-key", json!({"kind":"say","id":"q","text":"A or B?","t":["roof"]})).await;
-        say(&app, "claude-key", json!({"kind":"ask","id":"q","to":"felix","text":"A or B?"})).await;
+        say(
+            &app,
+            "claude-key",
+            json!({"kind":"say","id":"q","text":"A or B?","t":["roof"]}),
+        )
+        .await;
+        say(
+            &app,
+            "claude-key",
+            json!({"kind":"ask","id":"q","to":"felix","text":"A or B?"}),
+        )
+        .await;
         assert_eq!(app.board.read().unwrap().items["q"].status, "asked");
 
         // the cookie alone is not enough: a browser sends it whether or not
         // the person meant to send anything
-        let (st, body) = call(&app, as_person(&cookie, None, json!({"kind":"say","id":"q","text":"B"}))).await;
+        let (st, body) = call(
+            &app,
+            as_person(&cookie, None, json!({"kind":"say","id":"q","text":"B"})),
+        )
+        .await;
         assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
-        let (st, _) = call(&app, as_person(&cookie, Some("wrong"), json!({"kind":"say","id":"q","text":"B"}))).await;
+        let (st, _) = call(
+            &app,
+            as_person(
+                &cookie,
+                Some("wrong"),
+                json!({"kind":"say","id":"q","text":"B"}),
+            ),
+        )
+        .await;
         assert_eq!(st, StatusCode::FORBIDDEN);
         // and the token is only ever handed to the session that holds it
         let (_, body) = call(
             &app,
-            Request::get("/api/whoami").header("cookie", &cookie).body(Body::empty()).unwrap(),
+            Request::get("/api/whoami")
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
         )
         .await;
         assert!(body.contains("\"csrf\":\"tok\""), "{body}");
         let (_, body) = call(&app, get_req("/api/whoami", Some("claude-key"))).await;
-        assert!(!body.contains("csrf"), "an agent has no session to protect: {body}");
+        assert!(
+            !body.contains("csrf"),
+            "an agent has no session to protect: {body}"
+        );
 
         // with it, the ask is answered, and by the name the ask named
-        let (st, body) = call(&app, as_person(&cookie, Some("tok"), json!({"kind":"say","id":"q","text":"B"}))).await;
+        let (st, body) = call(
+            &app,
+            as_person(
+                &cookie,
+                Some("tok"),
+                json!({"kind":"say","id":"q","text":"B"}),
+            ),
+        )
+        .await;
         assert_eq!(st, StatusCode::OK, "{body}");
         let item = app.board.read().unwrap().items["q"].clone();
         assert_ne!(item.status, "asked", "the ask is freed");
@@ -1445,7 +1482,11 @@ mod tests {
 
         // take and done are a person's too
         for k in ["take", "done"] {
-            let (st, body) = call(&app, as_person(&cookie, Some("tok"), json!({"kind":k,"id":"q"}))).await;
+            let (st, body) = call(
+                &app,
+                as_person(&cookie, Some("tok"), json!({"kind":k,"id":"q"})),
+            )
+            .await;
             assert_eq!(st, StatusCode::OK, "{k}: {body}");
         }
     }
@@ -1461,7 +1502,12 @@ mod tests {
         assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
 
         // a tap for somebody else does not wake you, though the board moved
-        say(&app, "ana-key", json!({"kind":"say","id":"z","text":"for ana","t":["taxes"]})).await;
+        say(
+            &app,
+            "ana-key",
+            json!({"kind":"say","id":"z","text":"for ana","t":["taxes"]}),
+        )
+        .await;
         let (st, _) = call(&app, get_req("/api/prime.txt?wait=1", Some("claude-key"))).await;
         assert_eq!(st, StatusCode::NO_CONTENT);
 
@@ -1473,7 +1519,12 @@ mod tests {
             })
         };
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        say(&app, "ana-key", json!({"kind":"say","id":"y","text":"the roof again","t":["roof"],"to":"claude"})).await;
+        say(
+            &app,
+            "ana-key",
+            json!({"kind":"say","id":"y","text":"the roof again","t":["roof"],"to":"claude"}),
+        )
+        .await;
         let (st, body) = tokio::time::timeout(std::time::Duration::from_secs(10), waiting)
             .await
             .expect("a tap should end the wait")
@@ -1487,10 +1538,30 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let app = app(tmp.path());
         let cookie = signed_in(&app, "felix", "tok");
-        say(&app, "claude-key", json!({"kind":"say","id":"q","text":"A or B?","t":["roof"]})).await;
-        say(&app, "claude-key", json!({"kind":"ask","id":"q","to":"felix","text":"A or B?"})).await;
-        say(&app, "claude-key", json!({"kind":"say","id":"o","text":"not yours","t":["roof"]})).await;
-        say(&app, "claude-key", json!({"kind":"ask","id":"o","to":"ana","text":"well?"})).await;
+        say(
+            &app,
+            "claude-key",
+            json!({"kind":"say","id":"q","text":"A or B?","t":["roof"]}),
+        )
+        .await;
+        say(
+            &app,
+            "claude-key",
+            json!({"kind":"ask","id":"q","to":"felix","text":"A or B?"}),
+        )
+        .await;
+        say(
+            &app,
+            "claude-key",
+            json!({"kind":"say","id":"o","text":"not yours","t":["roof"]}),
+        )
+        .await;
+        say(
+            &app,
+            "claude-key",
+            json!({"kind":"ask","id":"o","to":"ana","text":"well?"}),
+        )
+        .await;
 
         let form = |cookie: &str, body: &str| {
             Request::post("/dash/answer")
@@ -1502,10 +1573,17 @@ mod tests {
         // the page carries the token, and only to the person signed in
         let (_, page) = call(
             &app,
-            Request::get("/").header("cookie", &cookie).header("accept", "text/html").body(Body::empty()).unwrap(),
+            Request::get("/board")
+                .header("cookie", &cookie)
+                .header("accept", "text/html")
+                .body(Body::empty())
+                .unwrap(),
         )
         .await;
-        assert!(page.contains("/dash/answer") && page.contains("tok"), "{page}");
+        assert!(
+            page.contains("/dash/answer") && page.contains("tok"),
+            "{page}"
+        );
 
         assert_eq!(
             call(&app, form(&cookie, "csrf=no&id=q&text=B")).await.0,
@@ -1517,12 +1595,18 @@ mod tests {
             call(&app, form(&cookie, "csrf=tok&id=o&text=B")).await.0,
             StatusCode::FORBIDDEN
         );
-        let (st, _) = call(&app, form(&cookie, "csrf=tok&id=q&text=B%2C+because+the+roof&done=1")).await;
+        let (st, _) = call(
+            &app,
+            form(&cookie, "csrf=tok&id=q&text=B%2C+because+the+roof&done=1"),
+        )
+        .await;
         assert_eq!(st, StatusCode::SEE_OTHER);
         let item = app.board.read().unwrap().items["q"].clone();
         assert_eq!(item.status, "done");
         assert!(
-            item.history.iter().any(|h| h.by == "felix" && h.text.as_deref() == Some("B, because the roof")),
+            item.history
+                .iter()
+                .any(|h| h.by == "felix" && h.text.as_deref() == Some("B, because the roof")),
             "{item:?}"
         );
     }
@@ -1532,17 +1616,34 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let app = app(tmp.path());
         let cookie = signed_in(&app, "felix", "tok");
-        say(&app, "claude-key", json!({"kind":"say","id":"q","text":"a thing","t":["roof"]})).await;
+        say(
+            &app,
+            "claude-key",
+            json!({"kind":"say","id":"q","text":"a thing","t":["roof"]}),
+        )
+        .await;
 
         // no asking: the one participant who cannot be automated does not
         // need a faster way to fill their own queue
-        let (st, body) = call(&app, as_person(&cookie, Some("tok"), json!({"kind":"ask","id":"q","to":"claude"}))).await;
+        let (st, body) = call(
+            &app,
+            as_person(
+                &cookie,
+                Some("tok"),
+                json!({"kind":"ask","id":"q","to":"claude"}),
+            ),
+        )
+        .await;
         assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
         assert!(body.contains("agent's to make"), "{body}");
 
         // nor putting down what somebody else is holding
         say(&app, "claude-key", json!({"kind":"take","id":"q"})).await;
-        let (st, body) = call(&app, as_person(&cookie, Some("tok"), json!({"kind":"drop","id":"q"}))).await;
+        let (st, body) = call(
+            &app,
+            as_person(&cookie, Some("tok"), json!({"kind":"drop","id":"q"})),
+        )
+        .await;
         assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
         assert_eq!(app.board.read().unwrap().items["q"].owner, "claude");
 
@@ -1562,9 +1663,17 @@ mod tests {
 
         // what they may drop is their own
         say(&app, "claude-key", json!({"kind":"drop","id":"q"})).await;
-        let (st, _) = call(&app, as_person(&cookie, Some("tok"), json!({"kind":"take","id":"q"}))).await;
+        let (st, _) = call(
+            &app,
+            as_person(&cookie, Some("tok"), json!({"kind":"take","id":"q"})),
+        )
+        .await;
         assert_eq!(st, StatusCode::OK);
-        let (st, body) = call(&app, as_person(&cookie, Some("tok"), json!({"kind":"drop","id":"q"}))).await;
+        let (st, body) = call(
+            &app,
+            as_person(&cookie, Some("tok"), json!({"kind":"drop","id":"q"})),
+        )
+        .await;
         assert_eq!(st, StatusCode::OK, "{body}");
     }
 
@@ -1573,17 +1682,37 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         // one word fences a family: `ward` and `ward-notes` both go behind it
         let app = fenced_app(tmp.path(), vec!["ward".into()]);
-        say(&app, "nurse-key", json!({"kind":"say","id":"w","text":"a record","t":["ward-notes"]})).await;
-        say(&app, "ana-key", json!({"kind":"say","id":"r","text":"the roof","t":["roof"]})).await;
+        say(
+            &app,
+            "nurse-key",
+            json!({"kind":"say","id":"w","text":"a record","t":["ward-notes"]}),
+        )
+        .await;
+        say(
+            &app,
+            "ana-key",
+            json!({"kind":"say","id":"r","text":"the roof","t":["roof"]}),
+        )
+        .await;
 
         // ana watches `*` — everything, which is exactly who must not see it
-        for p in ["/api/prime.txt", "/api/board.txt", "/api/state", "/api/stats.txt", "/api/day.txt"] {
+        for p in [
+            "/api/prime.txt",
+            "/api/board.txt",
+            "/api/state",
+            "/api/stats.txt",
+            "/api/day.txt",
+        ] {
             let (st, body) = call(&app, get_req(p, Some("ana-key"))).await;
             assert_eq!(st, StatusCode::OK, "{p}");
             assert!(!body.contains("a record"), "{p} still carries it:\n{body}");
         }
         // naming the topic is not how you get in: a scope narrows, never widens
-        let (_, body) = call(&app, get_req("/api/board.txt?t=ward-notes", Some("ana-key"))).await;
+        let (_, body) = call(
+            &app,
+            get_req("/api/board.txt?t=ward-notes", Some("ana-key")),
+        )
+        .await;
         assert!(!body.contains("a record"), "{body}");
         // nor is knowing the id
         assert_eq!(
@@ -1594,19 +1723,30 @@ mod tests {
         let (_, body) = call(&app, get_req("/api/board.txt", Some("nurse-key"))).await;
         assert!(body.contains("a record"), "{body}");
         let (_, body) = call(&app, get_req("/api/board.txt", Some("ana-key"))).await;
-        assert!(body.contains("the roof"), "the fence subtracts one topic, not the board:\n{body}");
+        assert!(
+            body.contains("the roof"),
+            "the fence subtracts one topic, not the board:\n{body}"
+        );
 
         // and the write side: the import that started this cannot happen again
         let (st, body) = call(
             &app,
-            post_req("/api/event", "ana-key", json!({"kind":"say","text":"imported","t":["ward","roof"]})),
+            post_req(
+                "/api/event",
+                "ana-key",
+                json!({"kind":"say","text":"imported","t":["ward","roof"]}),
+            ),
         )
         .await;
         assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
         assert!(body.contains("private"), "{body}");
         let (st, _) = call(
             &app,
-            post_req("/api/event", "nurse-key", json!({"kind":"say","text":"mine to write","t":["ward"]})),
+            post_req(
+                "/api/event",
+                "nurse-key",
+                json!({"kind":"say","text":"mine to write","t":["ward"]}),
+            ),
         )
         .await;
         assert_eq!(st, StatusCode::OK);
@@ -1770,11 +1910,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_root_is_the_board_for_a_key_and_the_manual_for_a_stranger() {
+    async fn the_root_is_the_picture_the_board_in_a_terminal_and_the_manual_for_a_stranger() {
         let tmp = tempfile::tempdir().unwrap();
         let app = app(tmp.path());
-        // a key: the board
+        // a key with no browser: the board, as text — what a terminal wanted
         let (st, body) = call(&app, get_req("/", Some("claude-key"))).await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(body.contains("kapwa · test") && !body.contains("<html"));
+        // a key in a browser: the picture, with the board one click away
+        let req = Request::get("/")
+            .header("accept", "text/html")
+            .header("authorization", "Bearer claude-key")
+            .body(Body::empty())
+            .unwrap();
+        let (st, body) = call(&app, req).await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(body.contains("Who deals with whom"), "the picture, not the list");
+        assert!(
+            body.contains("href=\"/board\""),
+            "the picture must reach the board"
+        );
+        // and the board is still there, whole
+        let (st, body) = call(&app, get_req("/board", Some("claude-key"))).await;
         assert_eq!(st, StatusCode::OK);
         assert!(body.contains("read-only"));
         // a browser: a page that says what this is, never a bounce to sign-in
