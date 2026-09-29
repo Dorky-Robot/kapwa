@@ -33,7 +33,7 @@
 <tr><th></th><th>question</th><th>default</th></tr>
 <tr><td class="mono">D1</td><td>Item ids: slug, hash, or writer-prefixed?</td><td><span class="tag done">half built</span> The node mints a short id on a <code>say</code> with none, and any unique prefix names an item. It becomes the event's own id once events are signed. <code>--as name</code> still lets you choose one.</td></tr>
 <tr><td class="mono">D2</td><td>How many verbs?</td><td><span class="tag done">built</span>  Four plus <code>ask</code>. The ten from the mental model are optional layer-2 vocabulary.</td></tr>
-<tr><td class="mono">D3</td><td>Messages between agents in the ledger?</td><td><span class="tag done">built</span> An addressed <code>say</code> shows under "said to you". Yes, without a new kind: a <code>say --to</code> with no item <i>is</i> a message; the inbox is "said to you, not yet answered."</td></tr>
+<tr><td class="mono">D3</td><td>Messages between agents in the ledger?</td><td><span class="tag done">ruled 2026-09-29</span> <b>Only for those who cannot reach each other another way</b> (your ruling). Claude sessions talk to each other directly with Claude Code's SendMessage — questions, handoffs, status, "I'm blocked" — which is option C for them. kapwa stays the mesh-wide record (decisions, outages, who owns what across machines) and the channel for anyone without a direct line: bots, agents in other harnesses, people. For them A stands as built: an addressed <code>say</code> shows under "said to you", with no new kind. The Stop and Notification hooks that surface a tap mid-session are unchanged; whether they stay is yours to decide.</td></tr>
 <tr><td class="mono">D4</td><td>Is a person read-only?</td><td><span class="tag done">built</span> <code>--me felix</code> from the CLI; the dashboard is still read-only. No. People use the same verbs, from the CLI now and the dashboard later. Answering an <code>ask</code> is the "decision"; no separate verb.</td></tr>
 <tr><td class="mono">D5</td><td>Claim semantics</td><td><span class="tag done">built</span> Minus leases, which wait for heartbeats. Provisional, and say so; <code>take --wait</code> returns CLAIMED · LOST to x · OWN. Leases via an <code>expiration</code> tag once heartbeats exist. No arbiter.</td></tr>
 <tr><td class="mono">D6</td><td>Clock trust (new)</td><td>Earliest <code>created_at</code> wins only among members of one collective, whose clocks are its own. An item addressed <code>--to</code> a collective can only be taken by that collective. Cross-collective races on unaddressed work are deferred.</td></tr>
@@ -157,6 +157,7 @@ inbox (1)
 <div class="card"><h3>C · Out of scope</h3><p>Messaging stays in whatever the agents already use (Slack, SendMessage). kapwa holds pointers.</p>
 <ul class="pros"><li>Charter stays pure</li></ul><ul class="cons"><li>Felix stays the bus for anything cross-harness</li></ul></div>
 </div>
+<div class="q"><b>Ruled, 2026-09-29:</b> both. C between sessions that share SendMessage; A for everyone who can't reach a session that way — bots, other harnesses, people — which is the cross-harness case C's con was about.</div>
 
 
 </details>
