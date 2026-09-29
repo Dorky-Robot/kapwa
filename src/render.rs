@@ -543,8 +543,9 @@ THE VERBS
 
   `done` is the verdict, so it is not everyone's to give: close what you
   hold, what you opened, or an ask that names you. An ask that names
-  someone is theirs alone to close, the asker's included. A person signed
-  in may close anything. Anyone else says instead.
+  someone is theirs alone to close, the asker's included. A person may
+  close anything — signed in, or with a key this node's agents file marks
+  `person`. Anyone else says instead.
 
 TOPICS, AND BEING A GOOD CITIZEN HERE
   `t` is a topic, or a list of them; an item can carry many, and a topic is

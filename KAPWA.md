@@ -29,7 +29,9 @@ It is **not** a task tracker and **not** a chat dump.
 | Sites & Brand | `sites` | `sites,portfolio` |
 | Lead: Monica | `lead-monica` | `monica,portfolio` |
 
-People: `felix` (Pocket ID / lead key). Claude Code workers may use `claude`
+People: `felix` (Pocket ID, and a key). Role `person` in a node's agents file
+marks a key as a person's: everything a lead may do, and it may close any item,
+as signing in may. Only a hand edit grants it; invites cannot. Claude Code workers may use `claude`
 (topic `mesh` or as configured).
 
 ## Habit (every coordinated turn)
