@@ -302,7 +302,7 @@ async fn invite(State(app): State<App>, caller: Caller, Json(i): Json<Inviting>)
         Ok(w) => w.clone(),
         Err(r) => return r,
     };
-    if who.role.as_deref() != Some("lead") {
+    if !who.leads() {
         return bad(
             StatusCode::FORBIDDEN,
             "only a lead may invite; ask one to vouch for you",
@@ -349,7 +349,7 @@ async fn rotate(State(app): State<App>, caller: Caller, Json(r): Json<Rotating>)
     // the name comes from the key unless one is given, so the common case
     // — rotating your own — cannot name somebody else by accident
     let name = r.name.unwrap_or_else(|| who.name.clone());
-    if name != who.name && who.role.as_deref() != Some("lead") {
+    if name != who.name && !who.leads() {
         return bad(
             StatusCode::FORBIDDEN,
             "only a lead may rotate somebody else's key; your own needs no permission",
@@ -503,7 +503,7 @@ async fn event(State(app): State<App>, caller: Caller, Json(mut attrs): Json<Eve
             .unwrap()
             .items
             .get(&id)
-            .and_then(|i| crate::board::may_close(i, &who.name, who.kind == Kind::User).err());
+            .and_then(|i| crate::board::may_close(i, &who.name, who.is_person()).err());
         if let Some(why) = refused {
             return bad(StatusCode::FORBIDDEN, &why);
         }
@@ -993,7 +993,7 @@ mod tests {
         let agents = tmp.join("agents");
         std::fs::write(
             &agents,
-            "# comment\nclaude:claude-key:worker:roof,fence\nana:ana-key:lead:*\nnurse:nurse-key:worker:ward\n",
+            "# comment\nclaude:claude-key:worker:roof,fence\nana:ana-key:lead:*\nnurse:nurse-key:worker:ward\nboss:boss-key:person:*\n",
         )
         .unwrap();
         App::new(Config {
@@ -1729,6 +1729,73 @@ mod tests {
         .await;
         assert_eq!(st, StatusCode::OK, "{body}");
         assert_eq!(status("r"), "done");
+    }
+
+    #[tokio::test]
+    async fn a_key_marked_as_a_person_s_closes_anything_and_leads_and_no_invite_can_make_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = app(tmp.path());
+        let status = |id: &str| app.board.read().unwrap().items[id].status.clone();
+
+        // an ask aimed at somebody else, and an item nobody of theirs touched
+        say(
+            &app,
+            "claude-key",
+            json!({"kind":"say","id":"q","text":"A or B?","t":["roof"]}),
+        )
+        .await;
+        say(
+            &app,
+            "claude-key",
+            json!({"kind":"ask","id":"q","to":"ana","text":"A or B?"}),
+        )
+        .await;
+        say(
+            &app,
+            "nurse-key",
+            json!({"kind":"say","id":"r","text":"Stale","t":["ward"]}),
+        )
+        .await;
+        // a lead is still bound by the rule
+        let (st, body) = call(
+            &app,
+            post_req("/api/event", "ana-key", json!({"kind":"done","id":"r"})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
+        // the person key is not
+        for id in ["q", "r"] {
+            let (st, body) = call(
+                &app,
+                post_req("/api/event", "boss-key", json!({"kind":"done","id":id})),
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK, "{id}: {body}");
+            assert_eq!(status(id), "done");
+        }
+
+        // and it keeps what a lead may do
+        let (st, body) = call(
+            &app,
+            post_req("/api/invite", "boss-key", json!({"name":"helper"})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        // but nobody can vouch a person into being
+        let (_, body) = call(
+            &app,
+            post_req(
+                "/api/invite",
+                "ana-key",
+                json!({"name":"fake","role":"person"}),
+            ),
+        )
+        .await;
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap()["role"],
+            "worker",
+            "{body}"
+        );
     }
 
     #[tokio::test]

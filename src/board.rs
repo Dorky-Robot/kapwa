@@ -103,9 +103,10 @@ fn same_key(a: &str, b: &str) -> bool {
 /// An ask that names someone is theirs to close: the asker handed the
 /// decision over, and whoever holds the item is waiting on it too. Anything
 /// else is yours to close if you hold it, opened it, or asked it of anyone
-/// — including "decided against, because". A person signed in is who the
-/// keys answer to, and may close anything; who counts as one is decided by
-/// the identity provider, not here.
+/// — including "decided against, because". A person is who the keys answer
+/// to, and may close anything: signed in, where the identity provider
+/// decides who counts, or holding a key the node's own agents file marks
+/// as a person's.
 ///
 /// Everyone else says instead: that leaves the note and not the verdict.
 /// Checked where a key writes, not in the fold, so history written before

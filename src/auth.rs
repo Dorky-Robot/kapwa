@@ -2,7 +2,9 @@
 //!
 //! - `Mesh`: another node, presenting the shared `KAPWA_MESH_TOKEN`.
 //!   May read logs to replicate. Never writes.
-//! - `Agent`: a key from the agents file (`name:token:role:topics`).
+//! - `Agent`: a key from the agents file (`name:token:role:topics`). The
+//!   role is `worker`, `lead`, or `person`: a person at a terminal, who
+//!   may do all a lead may and close anything, as if signed in.
 //!   The token is the name: `by` on every event comes from it. One key is
 //!   often many sessions at once, so a caller may add `X-Kapwa-Tag: ab12`
 //!   and sign as `name/ab12`. The tag is only ever a suffix of the key's
@@ -57,6 +59,23 @@ pub struct Who {
     /// means everything
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topics: Option<Vec<String>>,
+}
+
+impl Who {
+    /// A person, however they arrived: signed in, or at a terminal with a
+    /// key whose line in the agents file says `person`. The role is the
+    /// only way a key becomes one — it is written by hand on the node, and
+    /// no invitation or join can grant it.
+    pub fn is_person(&self) -> bool {
+        self.kind == Kind::User || self.role.as_deref() == Some("person")
+    }
+
+    /// May vouch for others and replace their keys. A person's key can do
+    /// everything a lead's can, so marking a key as a person never costs
+    /// it what it had.
+    pub fn leads(&self) -> bool {
+        matches!(self.role.as_deref(), Some("lead" | "person"))
+    }
 }
 
 fn valid_tag(t: &str) -> bool {
