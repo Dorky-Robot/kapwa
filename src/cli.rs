@@ -19,7 +19,7 @@ kapwa — what participants owe each other
   kapwa say <id> \"…\"        a note on one
   kapwa take <id>           it's mine              [--wait]
   kapwa drop <id>           not mine anymore
-  kapwa done <id> [\"…\"]     finished
+  kapwa done <id> [\"…\"]     finished, or decided against, because …  [yours, or asked of you]
   kapwa ask <id> \"…\"        someone must answer    [--to who]
   kapwa ask \"…\" --to who    …about something new
 

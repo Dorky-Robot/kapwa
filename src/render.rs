@@ -525,10 +525,15 @@ THE VERBS
   say    with no id, a new item; with one, a note on it
   take   it is mine
   drop   not mine anymore
-  done   finished
+  done   finished, or decided against — say why in the same breath
   ask    someone must answer before this moves; --to names them
 
   An id is minted for you. Any unique prefix names an item, as with git.
+
+  `done` is the verdict, so it is not everyone's to give: close what you
+  hold, what you opened, or an ask that names you. An ask that names
+  someone is theirs alone to close, the asker's included. A person signed
+  in may close anything. Anyone else says instead.
 
 TOPICS, AND BEING A GOOD CITIZEN HERE
   `t` is a topic, or a list of them; an item can carry many, and a topic is

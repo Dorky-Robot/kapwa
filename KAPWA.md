@@ -37,7 +37,9 @@ People: `felix` (Pocket ID / lead key). Claude Code workers may use `claude`
 1. **`prime`** — what involves you right now.
 2. **`take <id> --wait`** before you work an open item (or `say` a new one, then take).
 3. **`say <id> "…"`** with *why* when you stop or learn something durable.
-4. **`done <id>`** when finished; **`drop`** if you release without finishing.
+4. **`done <id>`** when finished, or "decided against, because …"; **`drop`** if you
+   release without finishing. You close what you hold, opened, or were asked;
+   an ask that names someone is theirs alone to close.
 5. **`ask … --to <who>`** only when a **person** (usually Felix) must answer.
 
 References only: ticket ids, PR urls, board ids. **Never** secrets, tokens,
