@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Build the kapwa binary here, ship it to a mesh machine, (re)start its
-# LaunchAgent. One static file per arch; nothing to install on the target.
+# Build the kapwa binary here, ship it to a mesh machine, restart its
+# LaunchAgent with `launchctl kickstart -k` (a reload only when the plist
+# changes, and then detached so a dropped ssh cannot strand it). One static
+# file per arch; nothing to install on the target.
 #
 #   scripts/deploy.sh <ssh-host>                        # upgrade an existing node
 #   scripts/deploy.sh <ssh-host> --intel                # x86_64 target (the 2019)
@@ -86,7 +88,8 @@ fi
 
 # the binary reads ~/.config/kapwa/env itself; launchd just runs it
 PLIST=$HOME/Library/LaunchAgents/$LABEL.plist
-cat >"$PLIST" <<EOF
+WANT=$(mktemp)
+cat >"$WANT" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -99,13 +102,39 @@ cat >"$PLIST" <<EOF
 </dict></plist>
 EOF
 
+# Restart without ever leaving the job unloaded behind a dead session.
+# The plist runs $ROOT/current/kapwa, so a new release needs only a
+# restart: kickstart -k is one call, and launchd does both halves itself.
+# bootout + bootstrap is only for a first install or a changed plist, and
+# then both halves run detached, so an ssh that drops in between cannot
+# leave the job booted out with nothing to bring it back (2026-09-20).
 U=$(id -u)
-launchctl bootout "gui/$U/$LABEL" 2>/dev/null || true
-sleep 1
-launchctl bootstrap "gui/$U" "$PLIST" || { sleep 3; launchctl bootstrap "gui/$U" "$PLIST"; }
+# (|| true: not loaded is an answer here, and pipefail would make it fatal)
+pid_now() { { launchctl print "gui/$U/$LABEL" 2>/dev/null | awk '$1 == "pid" { print $3; exit }'; } || true; }
+OLD=$(pid_now)
+if launchctl print "gui/$U/$LABEL" >/dev/null 2>&1; then
+  if [ -f "$PLIST" ] && cmp -s "$WANT" "$PLIST"; then
+    rm -f "$WANT"
+    echo "  restarting: kickstart -k"
+    launchctl kickstart -k "gui/$U/$LABEL"
+  else
+    mv "$WANT" "$PLIST"
+    echo "  plist changed: reloading, detached"
+    nohup sh -c "launchctl bootout 'gui/$U/$LABEL'; sleep 2; launchctl bootstrap 'gui/$U' '$PLIST' || { sleep 3; launchctl bootstrap 'gui/$U' '$PLIST'; }" </dev/null >/dev/null 2>&1 &
+  fi
+else
+  # not loaded, so there is nothing to cut: one call, no bootout
+  mv "$WANT" "$PLIST"
+  echo "  first install: bootstrap"
+  launchctl bootstrap "gui/$U" "$PLIST" || { sleep 3; launchctl bootstrap "gui/$U" "$PLIST"; }
+fi
+
+# up means a new process answering, not the old one before it went down
 for _ in $(seq 60); do
-  if out=$(curl -sf http://127.0.0.1:3410/healthz); then echo "  up: $out"; exit 0; fi
   sleep 0.5
+  NOW=$(pid_now)
+  [ -n "$NOW" ] && [ "$NOW" != "$OLD" ] || continue
+  if out=$(curl -sf http://127.0.0.1:3410/healthz); then echo "  up (pid $NOW): $out"; exit 0; fi
 done
 echo "  node did not come up; log tail:"; tail -30 "$HOME/Library/Logs/kapwa/launchd.log"; exit 1
 REMOTE
