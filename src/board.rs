@@ -161,11 +161,15 @@ pub fn clean_topic(t: &str) -> Option<String> {
 /// What one participant may see of the board, and under what scope.
 ///
 /// `topics` narrows: empty means everything, as it always has. `fence`
-/// subtracts, and is the part that is not self-serve — a topic matching one
-/// of its patterns is on no default board, and a key reads it only because
-/// its own line in the agents file names the topic. So a scope asked for in
-/// a query narrows what you see and can never widen it, which is the one
-/// way a fence like this leaks.
+/// subtracts, and is the part that is not self-serve — a topic under one of
+/// its patterns is on no default board, and a key reads it only because its
+/// own line in the agents file opens that topic (`open`). So a scope asked
+/// for in a query narrows what you see and can never widen it, which is the
+/// one way a fence like this leaks.
+///
+/// What involves you gets through: an item you hold, opened, were asked or
+/// were addressed on is yours to see whatever it is tagged, or the fence
+/// would hide your own work from you while `mine` still listed it.
 ///
 /// It is a lens, not a redaction: fenced events still replicate to every
 /// node, and anyone holding a key that names the topic still reads them.
@@ -175,6 +179,10 @@ pub fn clean_topic(t: &str) -> Option<String> {
 pub struct Lens {
     pub topics: Vec<String>,
     pub fence: Vec<String>,
+    /// topics this caller's key opens, each with its family (`x`, `x-…`)
+    pub open: Vec<String>,
+    /// who is looking, so what involves them is never fenced from them
+    pub me: String,
 }
 
 impl Lens {
@@ -190,13 +198,23 @@ impl Lens {
     pub fn under(topics: &[&str]) -> Lens {
         Lens {
             topics: topics.iter().map(|t| t.to_string()).collect(),
-            fence: vec![],
+            ..Lens::default()
         }
+    }
+
+    /// Is this one topic shut to this caller?
+    pub fn shut(&self, topic: &str) -> bool {
+        fenced(topic, &self.fence) && !fenced(topic, &self.open)
+    }
+
+    fn involves(&self, i: &Item) -> bool {
+        let me = |t: &str| !self.me.is_empty() && !t.is_empty() && is(&self.me, t);
+        me(&i.owner) || me(&i.created_by) || me(&i.asked_of) || i.to.iter().any(|t| me(t))
     }
 
     pub fn wanted(&self, i: &Item) -> bool {
         (self.topics.is_empty() || i.topics.iter().any(|t| self.topics.contains(t)))
-            && !i.topics.iter().any(|t| fenced(t, &self.fence))
+            && (!i.topics.iter().any(|t| self.shut(t)) || self.involves(i))
     }
 
     pub fn scope(&self) -> String {
@@ -208,11 +226,18 @@ impl Lens {
     }
 }
 
-/// Is this topic behind the fence? A pattern matches as a substring, so one
-/// word covers a family of topics without anybody having to list each one
-/// as it is invented — which is the failure mode a fence has to survive.
-pub fn fenced(topic: &str, fence: &[String]) -> bool {
-    fence.iter().any(|p| topic.contains(p.as_str()))
+/// Is this topic under one of these? A pattern covers itself and its family
+/// — `clinical` covers `clinical-notes` — so a topic invented later under a
+/// fenced word is fenced without anybody listing it. Not a substring: that
+/// made `port` fence `portfolio`, and made a key naming `portfolio` lift the
+/// whole of `port`.
+pub fn fenced(topic: &str, patterns: &[String]) -> bool {
+    patterns.iter().any(|p| {
+        topic == p
+            || topic
+                .strip_prefix(p.as_str())
+                .is_some_and(|rest| rest.starts_with('-'))
+    })
 }
 
 pub fn topics_of(e: &Event) -> Vec<String> {
@@ -482,6 +507,31 @@ mod tests {
             x.history.last().unwrap().fold.as_deref(),
             Some("answers the ask")
         );
+    }
+
+    #[test]
+    fn a_fence_word_covers_itself_and_its_family_and_nothing_that_merely_contains_it() {
+        let f = vec!["port".to_string(), "clinical".to_string()];
+        for t in ["port", "port-tracker", "clinical", "clinical-records"] {
+            assert!(fenced(t, &f), "{t}");
+        }
+        for t in [
+            "portfolio",
+            "report",
+            "support-desk",
+            "preclinical",
+            "clients---patients",
+        ] {
+            assert!(!fenced(t, &f), "{t}");
+        }
+        // a key opens what it names, and that family, not the whole pattern
+        let lens = Lens {
+            fence: f.clone(),
+            open: vec!["clinical-records".into(), "portfolio".into()],
+            ..Lens::default()
+        };
+        assert!(!lens.shut("clinical-records") && !lens.shut("clinical-records-2025"));
+        assert!(lens.shut("clinical") && lens.shut("clinical-notes") && lens.shut("port"));
     }
 
     #[test]

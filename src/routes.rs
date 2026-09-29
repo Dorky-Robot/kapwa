@@ -514,10 +514,10 @@ async fn event(State(app): State<App>, caller: Caller, Json(mut attrs): Json<Eve
     // filter alone would leave the next import free to land the same way.
     // A key may tag a private topic only if its own line names it, which is
     // the same rule that decides what it may read.
-    let shut = fence(&app, &who);
+    let shut = wide(&app, &who, &None);
     if let Some(t) = crate::board::topics_of(&attrs)
         .into_iter()
-        .find(|t| crate::board::fenced(t, &shut))
+        .find(|t| shut.shut(t))
     {
         return bad(
             StatusCode::FORBIDDEN,
@@ -646,19 +646,24 @@ fn topics(t: &Option<String>, who: &Who) -> Vec<String> {
     }
 }
 
-/// Which of the node's private topics stay shut to this caller. A key lifts
-/// a pattern only because its own line in the agents file names a topic that
-/// matches it, so what anyone may see is decided where the keys are kept and
-/// never by the request. A person signed in at the dashboard has no line, so
-/// the whole fence holds for them.
+/// The node's private topics, as this caller meets them. A person —
+/// signed in, or holding a key marked `person` — meets none: the fence
+/// keeps records out of agents' context windows, and the people the agents
+/// answer to are not who it is for. Everyone else meets all of them.
 fn fence(app: &App, who: &Who) -> Vec<String> {
-    let held = who.topics.clone().unwrap_or_default();
-    app.cfg
-        .private_topics
-        .iter()
-        .filter(|p| !held.iter().any(|t| t.contains(p.as_str())))
-        .cloned()
-        .collect()
+    if who.is_person() {
+        return vec![];
+    }
+    app.cfg.private_topics.clone()
+}
+
+/// What this caller's key opens behind the fence: the topics its own line
+/// in the agents file names, and nothing a request can add. `*` is not in
+/// the list — it means "every topic" for scope, and a fence that `*` lifted
+/// would be lifted for every key with no list, the opposite of fail-closed.
+/// To read a private topic, a key names it.
+fn opens(who: &Who) -> Vec<String> {
+    who.topics.clone().unwrap_or_default()
 }
 
 /// The narrow view: what involves you, under the topics you watch.
@@ -666,6 +671,8 @@ fn lens(app: &App, who: &Who, t: &Option<String>) -> Lens {
     Lens {
         topics: topics(t, who),
         fence: fence(app, who),
+        open: opens(who),
+        me: who.name.clone(),
     }
 }
 
@@ -679,6 +686,8 @@ fn wide(app: &App, who: &Who, t: &Option<String>) -> Lens {
             .map(|t| t.split(',').filter_map(clean_topic).collect())
             .unwrap_or_default(),
         fence: fence(app, who),
+        open: opens(who),
+        me: who.name.clone(),
     }
 }
 
@@ -993,7 +1002,7 @@ mod tests {
         let agents = tmp.join("agents");
         std::fs::write(
             &agents,
-            "# comment\nclaude:claude-key:worker:roof,fence\nana:ana-key:lead:*\nnurse:nurse-key:worker:ward\nboss:boss-key:person:*\n",
+            "# comment\nclaude:claude-key:worker:roof,fence\nana:ana-key:lead:*\nnurse:nurse-key:worker:ward\nboss:boss-key:person:*\nfolio:folio-key:worker:portfolio\n",
         )
         .unwrap();
         App::new(Config {
@@ -1937,6 +1946,80 @@ mod tests {
         )
         .await;
         assert_eq!(st, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn what_you_hold_is_yours_to_see_and_close_whatever_it_is_tagged() {
+        // the live case: an item named `documents`, tagged into the fence, held
+        // by one session of a key that does not open those topics. `mine`
+        // listed it and `show` said there was no such item.
+        let tmp = tempfile::tempdir().unwrap();
+        let app = fenced_app(tmp.path(), vec!["port".into(), "clinical-records".into()]);
+        say(
+            &app,
+            "boss-key",
+            json!({"kind":"say","id":"documents","text":"Documents & attachments","t":["clinical-records","port"]}),
+        )
+        .await;
+        let as_session = |tag: &str, req: axum::http::request::Builder| {
+            req.header("authorization", "Bearer claude-key")
+                .header("x-kapwa-tag", tag)
+        };
+        let get = |tag: &'static str, p: &'static str| {
+            let app = app.clone();
+            async move {
+                call(
+                    &app,
+                    as_session(tag, Request::get(p))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+            }
+        };
+        let post = |tag: &'static str, body: Value| {
+            let app = app.clone();
+            async move {
+                call(
+                    &app,
+                    as_session(tag, Request::post("/api/event"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+            }
+        };
+        // before anyone holds it, the claude key cannot see it
+        assert_eq!(
+            get("129", "/api/item/documents").await.0,
+            StatusCode::NOT_FOUND
+        );
+        let (st, body) = post("129", json!({"kind":"take","id":"documents"})).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+
+        // now mine and show agree, for the session that holds it
+        let (_, mine) = get("129", "/api/mine").await;
+        assert!(mine.contains("Documents & attachments"), "{mine}");
+        let (st, shown) = get("129", "/api/item/documents").await;
+        assert_eq!(st, StatusCode::OK, "{shown}");
+        assert!(shown.contains("claude/129"), "{shown}");
+        let (_, board) = get("129", "/api/board.txt").await;
+        assert!(board.contains("Documents & attachments"), "{board}");
+        // another session of the same key is not involved, and still does not see it
+        assert_eq!(
+            get("999", "/api/item/documents").await.0,
+            StatusCode::NOT_FOUND
+        );
+
+        // and the holder can close it
+        let (st, body) = post(
+            "129",
+            json!({"kind":"done","id":"documents","text":"moved to the new store"}),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(app.board.read().unwrap().items["documents"].status, "done");
     }
 
     #[tokio::test]

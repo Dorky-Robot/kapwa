@@ -33,8 +33,9 @@ pub struct Config {
     pub peers: Vec<String>,
     pub mesh_token: Option<String>,
     pub agents_file: PathBuf,
-    /// Substring patterns. A topic matching one of these is fenced: it is on
-    /// nobody's board unless their own key names it. Empty by default, so a
+    /// Topic patterns. A topic that is one of these, or in its family
+    /// (`x-…`), is fenced: it is on no agent's board unless their own key
+    /// names it. People are not fenced. Empty by default, so a
     /// node that says nothing behaves exactly as it always did.
     pub private_topics: Vec<String>,
     pub public_url: String,
