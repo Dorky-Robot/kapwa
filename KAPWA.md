@@ -42,6 +42,10 @@ People: `felix` (Pocket ID / lead key). Claude Code workers may use `claude`
    an ask that names someone is theirs alone to close.
 5. **`ask … --to <who>`** only when a **person** (usually Felix) must answer.
 
+Claude sessions talk to each other directly with SendMessage, not with `--to`
+here. kapwa is the mesh-wide record and the channel for whoever a session
+cannot reach directly: bots, other harnesses, people.
+
 References only: ticket ids, PR urls, board ids. **Never** secrets, tokens,
 EIN digits, mail bodies, patient/client clinical content, or Sara-account material.
 

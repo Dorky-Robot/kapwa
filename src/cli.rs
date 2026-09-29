@@ -23,6 +23,10 @@ kapwa — what participants owe each other
   kapwa ask <id> \"…\"        someone must answer    [--to who]
   kapwa ask \"…\" --to who    …about something new
 
+  kapwa is the mesh's record, and the way to reach whoever you cannot reach
+  directly: bots, other harnesses, people. sessions that can message each
+  other (Claude Code: SendMessage) talk there, and do not --to each other.
+
   kapwa day                 what happened today, and who did it  [--on <day>] [--t topic]
   kapwa stats               where the work waited                [--days N] [--t topic]
   kapwa topics              what topics are in use; look before inventing
@@ -364,6 +368,12 @@ fn history(item: &Value) -> String {
     out.join("\n")
 }
 
+/// The hooks `kapwa setup claude` prints. The start hook primes the
+/// session with the record. Stop and Notification run `mine --hook`, which
+/// is silent unless something addressed the session: that is how a tap from
+/// a bot, a person or another harness reaches a session already running.
+/// Sessions that can message each other directly do that instead of
+/// tapping here, so these carry little between two of them.
 const SETUP_CLAUDE: &str = r#"{
   "hooks": {
     "SessionStart": [{
@@ -722,7 +732,7 @@ pub async fn run(raw: Vec<String>) -> i32 {
                 done(&node.event(body).await?, as_json, "asked");
             }
             ("setup", [what]) if what == "claude" => {
-                println!("# add to ~/.claude/settings.json (merge with any hooks you have).\n# it puts `kapwa prime` into every session at start, on resume, and\n# again after compaction, so the board survives long sessions.\n#\n# the other two are for the rest of the session: a tap arrives by pull,\n# so a session already running would not otherwise notice one. they print\n# nothing at all unless somebody asked you something or said something to\n# you, which is why they can afford to run every turn.\n{SETUP_CLAUDE}");
+                println!("# add to ~/.claude/settings.json (merge with any hooks you have).\n# it puts `kapwa prime` into every session at start, on resume, and\n# again after compaction, so the board survives long sessions.\n#\n# the other two are for the rest of the session: a tap arrives by pull,\n# so a session already running would not otherwise notice one. they print\n# nothing at all unless somebody asked you something or said something to\n# you, which is why they can afford to run every turn. a tap comes from a\n# bot, a person or an agent that cannot message the session directly;\n# sessions that can, talk with SendMessage and not through kapwa.\n{SETUP_CLAUDE}");
             }
             ("say" | "take" | "drop" | "done" | "ask" | "show" | "setup" | "join" | "invite", _) => return Ok(usage(&format!("`{cmd}` wants different arguments"))),
             (other, _) => return Ok(usage(&format!("unknown command `{other}`"))),
