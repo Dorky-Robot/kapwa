@@ -107,8 +107,8 @@ async fn dashboard(
     if let Some(who) = &caller.who {
         if q.data.is_some() {
             return match &q.who {
-                Some(w) => Json(try_pulse::pov(&app, w)).into_response(),
-                None => Json(try_pulse::data(&app)).into_response(),
+                Some(w) => Json(try_pulse::pov(&app, w, &wide(&app, who, &None))).into_response(),
+                None => Json(try_pulse::data(&app, &wide(&app, who, &None))).into_response(),
             };
         }
         if !wants_html {
@@ -117,7 +117,8 @@ async fn dashboard(
         let me = (who.kind == Kind::User)
             .then(|| caller.csrf.as_deref().map(|c| (who.name.as_str(), c)))
             .flatten();
-        return Html(try_pulse::page(&app, "pulse", me).into_string()).into_response();
+        return Html(try_pulse::page(&app, "pulse", me, &wide(&app, who, &None)).into_string())
+            .into_response();
     }
     if wants_html {
         Html(render::front_door(&app, app.cfg.oidc.is_some()).into_string()).into_response()
@@ -694,12 +695,16 @@ fn wide(app: &App, who: &Who, t: &Option<String>) -> Lens {
 /// Every topic in use, commonest first. An open vocabulary costs synonyms,
 /// and this is what keeps the bill down: look before you invent a word.
 async fn topics_in_use(State(app): State<App>, caller: Caller) -> Response {
-    if let Err(r) = caller.allow(&[Kind::Agent, Kind::User]) {
-        return r;
-    }
+    let who = match caller.allow(&[Kind::Agent, Kind::User]) {
+        Ok(w) => w.clone(),
+        Err(r) => return r,
+    };
+    // a topic's name and count say what is behind the fence, so the list
+    // goes through the same lens as the board
+    let lens = wide(&app, &who, &None);
     let st = app.board.read().unwrap();
     let mut n: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
-    for i in st.items.values() {
+    for i in st.items.values().filter(|i| lens.wanted(i)) {
         for t in &i.topics {
             let e = n.entry(t.clone()).or_default();
             e.0 += 1;
@@ -904,14 +909,14 @@ async fn pulse_page(
     };
     if q.data.is_some() {
         return match &q.who {
-            Some(w) => Json(try_pulse::pov(&app, w)).into_response(),
-            None => Json(try_pulse::data(&app)).into_response(),
+            Some(w) => Json(try_pulse::pov(&app, w, &wide(&app, &who, &None))).into_response(),
+            None => Json(try_pulse::data(&app, &wide(&app, &who, &None))).into_response(),
         };
     }
     let me = (who.kind == Kind::User)
         .then(|| caller.csrf.as_deref().map(|c| (who.name.as_str(), c)))
         .flatten();
-    Html(try_pulse::page(&app, which, me).into_string()).into_response()
+    Html(try_pulse::page(&app, which, me, &wide(&app, &who, &None)).into_string()).into_response()
 }
 
 /// What just happened, newest first. An agent coming back after a while
@@ -1946,6 +1951,100 @@ mod tests {
         )
         .await;
         assert_eq!(st, StatusCode::OK);
+    }
+
+    /// Every way a key can look at the board, as text, for one assertion.
+    async fn every_view(app: &App, key: &str) -> String {
+        let mut all = String::new();
+        for p in [
+            "/api/board.txt",
+            "/api/state",
+            "/api/feed",
+            "/api/topics",
+            "/?data=1",
+            "/?data=1&who=nurse",
+            "/pulse?data=1",
+            "/pulse",
+        ] {
+            let (st, body) = call(app, get_req(p, Some(key))).await;
+            assert_eq!(st, StatusCode::OK, "{p}: {body}");
+            all.push_str(&body);
+        }
+        all
+    }
+
+    #[tokio::test]
+    async fn the_picture_and_the_topic_list_are_fenced_like_the_board_and_people_are_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = fenced_app(tmp.path(), vec!["port".into(), "clinical".into()]);
+        say(
+            &app,
+            "boss-key",
+            json!({"kind":"say","id":"p1","text":"a port record","t":["port"]}),
+        )
+        .await;
+        say(
+            &app,
+            "boss-key",
+            json!({"kind":"ask","id":"p1","to":"felix","text":"which chart?"}),
+        )
+        .await;
+        say(
+            &app,
+            "boss-key",
+            json!({"kind":"say","id":"p2","text":"a clinical note","t":["clinical-notes"]}),
+        )
+        .await;
+        say(
+            &app,
+            "ana-key",
+            json!({"kind":"say","id":"f1","text":"the portfolio page","t":["portfolio"]}),
+        )
+        .await;
+
+        // an agent sees none of it, by any door, the picture and topics included;
+        // and `*` is a scope, not a key to the fence
+        let seen = every_view(&app, "ana-key").await;
+        for hidden in [
+            "a port record",
+            "which chart?",
+            "a clinical note",
+            "#port ",
+            "#clinical-notes",
+        ] {
+            assert!(!seen.contains(hidden), "ana sees {hidden:?}");
+        }
+        // a whole word, not a substring: `port` does not fence `portfolio`
+        assert!(
+            seen.contains("the portfolio page") && seen.contains("#portfolio"),
+            "{seen}"
+        );
+
+        // and a key that names `portfolio` does not lift `port`
+        let seen = every_view(&app, "folio-key").await;
+        assert!(!seen.contains("a port record") && seen.contains("the portfolio page"));
+
+        // a person sees everything, signed in or at a terminal with a person's key
+        let seen = every_view(&app, "boss-key").await;
+        for shown in ["a port record", "which chart?", "a clinical note", "#port "] {
+            assert!(seen.contains(shown), "boss misses {shown:?}");
+        }
+        let cookie = signed_in(&app, "felix", "tok");
+        for p in ["/?data=1", "/api/item/p1", "/api/topics"] {
+            let (st, body) = call(
+                &app,
+                Request::get(p)
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK, "{p}");
+            assert!(
+                body.contains("p1") || body.contains("#port "),
+                "{p}: {body}"
+            );
+        }
     }
 
     #[tokio::test]

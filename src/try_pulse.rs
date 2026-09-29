@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use serde_json::{json, Value};
 
+use crate::board::{Item, Lens};
 use crate::App;
 
 fn clip(s: &str, n: usize) -> String {
@@ -34,9 +35,26 @@ fn hours_since(at: &str, now: chrono::DateTime<chrono::Utc>) -> i64 {
         .unwrap_or(0)
 }
 
+/// The events of the items this caller may see, and no others: the page
+/// draws text and names out of events, so a fence on items alone would let
+/// every fenced line through the feed.
+fn seen(app: &App, st: &crate::board::State, lens: &Lens) -> Vec<crate::log::Event> {
+    app.logs
+        .all()
+        .into_iter()
+        .filter(|e| {
+            e.get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| st.items.get(id))
+                .is_some_and(|i| lens.wanted(i))
+        })
+        .collect()
+}
+
 /// One fold of the whole record into everything both pages draw.
-pub fn data(app: &App) -> Value {
-    let evs = app.logs.all();
+pub fn data(app: &App, lens: &Lens) -> Value {
+    let st = app.board.read().unwrap();
+    let evs = seen(app, &st, lens);
     let now = chrono::Utc::now();
 
     // fourteen days of flow. An item is "opened" on the day of its first
@@ -99,10 +117,9 @@ pub fn data(app: &App) -> Value {
         })
         .collect();
 
-    let st = app.board.read().unwrap();
-    let mut asks: Vec<Value> = st
-        .items
-        .values()
+    let items: Vec<&Item> = st.items.values().filter(|i| lens.wanted(i)).collect();
+    let mut asks: Vec<Value> = items
+        .iter()
         .filter(|i| i.status == "asked")
         .map(|i| {
             json!({
@@ -119,7 +136,7 @@ pub fn data(app: &App) -> Value {
     // whoever opened it. Undirected weight is what the picture needs.
     let mut edge: BTreeMap<(String, String), u32> = BTreeMap::new();
     #[allow(clippy::type_complexity)]
-    for i in st.items.values() {
+    for i in &items {
         for t in &i.to {
             if t.is_empty() || t == &i.created_by {
                 continue;
@@ -175,8 +192,8 @@ pub fn data(app: &App) -> Value {
         })
         .collect();
 
-    let open_now = st.items.values().filter(|i| i.status != "done").count();
-    let done_now = st.items.values().filter(|i| i.status == "done").count();
+    let open_now = items.iter().filter(|i| i.status != "done").count();
+    let done_now = items.iter().filter(|i| i.status == "done").count();
     let oldest = asks.first().and_then(|a| a["hours"].as_i64()).unwrap_or(0);
 
     json!({
@@ -204,10 +221,11 @@ pub fn data(app: &App) -> Value {
 /// whom; this says what that has actually consisted of — what they are
 /// holding, what is waiting on them, what they last did, and every name
 /// they sign with, which is the only way to tell one session from five.
-pub fn pov(app: &App, who: &str) -> Value {
+pub fn pov(app: &App, who: &str, lens: &Lens) -> Value {
     let base = |s: &str| s.split('/').next().unwrap_or(s).to_string();
     let st = app.board.read().unwrap();
-    let evs = app.logs.all();
+    let evs = seen(app, &st, lens);
+    let items: Vec<&Item> = st.items.values().filter(|i| lens.wanted(i)).collect();
     let now = chrono::Utc::now();
 
     let mut itself: Option<(String, Value)> = None;
@@ -250,28 +268,25 @@ pub fn pov(app: &App, who: &str) -> Value {
         json!({"id": i.id, "title": clip(&i.title, 78),
                "hours": age.then(|| hours_since(&i.updated_at, now))})
     };
-    let holds: Vec<Value> = st
-        .items
-        .values()
+    let holds: Vec<Value> = items
+        .iter()
         .filter(|i| i.status == "taken" && base(&i.owner) == who)
         .map(|i| row(i, false))
         .collect();
-    let mut waiting: Vec<Value> = st
-        .items
-        .values()
+    let mut waiting: Vec<Value> = items
+        .iter()
         .filter(|i| i.status == "asked" && base(&i.asked_of) == who)
         .map(|i| row(i, true))
         .collect();
     waiting.sort_by_key(|a| -a["hours"].as_i64().unwrap_or(0));
-    let asked_out: Vec<Value> = st
-        .items
-        .values()
+    let asked_out: Vec<Value> = items
+        .iter()
         .filter(|i| i.status == "asked" && base(&i.asked_by) == who && base(&i.asked_of) != who)
         .map(|i| row(i, true))
         .collect();
 
     let mut with: BTreeMap<String, u32> = BTreeMap::new();
-    for i in st.items.values() {
+    for i in &items {
         let opener = base(&i.created_by);
         for to in &i.to {
             let t = base(to);
@@ -323,8 +338,8 @@ pub fn pov(app: &App, who: &str) -> Value {
     })
 }
 
-pub fn page(app: &App, which: &str, me: Option<(&str, &str)>) -> Markup {
-    let d = data(app);
+pub fn page(app: &App, which: &str, me: Option<(&str, &str)>, lens: &Lens) -> Markup {
+    let d = data(app, lens);
     let panel = which == "panel";
     // only the asks that named you. The form is server-rendered rather than
     // drawn by the live redraw, so an answer half-typed when somebody else
