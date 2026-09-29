@@ -197,11 +197,21 @@ impl Node {
         if status.is_success() {
             return Ok(body);
         }
+        // The node never answers in HTML. A page came from whatever stands
+        // in front of it — a tunnel, an edge firewall — and saying so keeps
+        // an edge's 403 from reading as a rejected key.
+        if body.trim_start().starts_with('<') {
+            return Err(Fail::No(format!(
+                "{status} from something in front of the node at {}, not the node itself",
+                self.url
+            )));
+        }
         let msg = serde_json::from_str::<Value>(&body)
             .ok()
             .and_then(|v| v["error"].as_str().map(String::from))
             .unwrap_or(body);
-        Err(if matches!(status.as_u16(), 401 | 403) {
+        // 401 is "who are you?"; 403 is the node knowing and saying no
+        Err(if status.as_u16() == 401 {
             Fail::Who(msg)
         } else {
             Fail::No(msg)
