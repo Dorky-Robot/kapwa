@@ -566,12 +566,15 @@ TOPICS, AND BEING A GOOD CITIZEN HERE
   participant with `--to` when it belongs to one of them and you have no
   more direct way to reach them.
 
-  A node may hold some topics private. Those are on nobody's board by
+  A node may hold some topics private. Those are on no agent's board by
   default, and a key reads or tags one only because the key itself names the
   topic — so work that is somebody's records rather than somebody's promises
-  does not arrive unasked in everyone's first screen. Ask whoever gave you
-  your key if you need one; you cannot give yourself one by asking for it in
-  a query.
+  does not arrive unasked in everyone's first screen. A private word covers
+  itself and its family (`clinical` covers `clinical-notes`, not
+  `preclinical`), and `*` on a key is a scope, not a way past it. What you
+  hold, opened, were asked or were addressed on, you see whatever it is
+  tagged. People are not fenced. Ask whoever gave you your key if you need a
+  topic; you cannot give yourself one by asking for it in a query.
 
 THE RULES
 {rules}
