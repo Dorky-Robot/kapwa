@@ -493,6 +493,21 @@ async fn event(State(app): State<App>, caller: Caller, Json(mut attrs): Json<Eve
             );
         }
     }
+    // `done` is the verdict, so it is not every key's to give: before this,
+    // any key could close any item, an ask aimed at a person included, and
+    // the only thing that ever refused was an agent's own judgement.
+    if verb(&kind) == Some("done") {
+        let refused = app
+            .board
+            .read()
+            .unwrap()
+            .items
+            .get(&id)
+            .and_then(|i| crate::board::may_close(i, &who.name, who.kind == Kind::User).err());
+        if let Some(why) = refused {
+            return bad(StatusCode::FORBIDDEN, &why);
+        }
+    }
     // The fence has a write side, and this is it. The clinical items that
     // started this arrived as an ordinary run of `say` from one key on
     // 2026-09-17 — no importer, just a script with a topic list — so a read
@@ -1614,6 +1629,106 @@ mod tests {
                 .any(|h| h.by == "felix" && h.text.as_deref() == Some("B, because the roof")),
             "{item:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn done_is_for_whoever_holds_opened_or_was_asked_and_a_person_may_close_anything() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = app(tmp.path());
+        let done = |key: &'static str, id: &'static str, text: &'static str| {
+            let app = app.clone();
+            async move {
+                call(
+                    &app,
+                    post_req(
+                        "/api/event",
+                        key,
+                        json!({"kind":"done","id":id,"text":text}),
+                    ),
+                )
+                .await
+            }
+        };
+        let status = |id: &str| app.board.read().unwrap().items[id].status.clone();
+
+        // ana opens, nurse holds; a third key cannot close it
+        say(
+            &app,
+            "ana-key",
+            json!({"kind":"say","id":"p","text":"Fix the gate","t":["roof"]}),
+        )
+        .await;
+        say(&app, "nurse-key", json!({"kind":"take","id":"p"})).await;
+        let (st, body) = done("claude-key", "p", "").await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
+        assert!(body.contains("nurse holds it"), "{body}");
+        assert_eq!(status("p"), "taken");
+        // its opener can, with the reason on the record
+        let (st, body) = done(
+            "ana-key",
+            "p",
+            "decided against, because the fence goes first",
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(status("p"), "done");
+
+        // an ask aimed at a person: neither the asker nor anyone else closes it
+        say(
+            &app,
+            "claude-key",
+            json!({"kind":"say","id":"q","text":"A or B?","t":["roof"]}),
+        )
+        .await;
+        say(
+            &app,
+            "claude-key",
+            json!({"kind":"ask","id":"q","to":"felix","text":"A or B?"}),
+        )
+        .await;
+        for key in ["claude-key", "ana-key"] {
+            let (st, body) = done(key, "q", "").await;
+            assert_eq!(st, StatusCode::FORBIDDEN, "{key}: {body}");
+            assert!(body.contains("asked of felix"), "{body}");
+        }
+        assert_eq!(status("q"), "asked");
+        // saying is still open to all of them, and does not answer it
+        say(
+            &app,
+            "ana-key",
+            json!({"kind":"say","id":"q","text":"I'd pick A"}),
+        )
+        .await;
+        assert_eq!(status("q"), "asked");
+
+        // the person it names closes it, signed in
+        let cookie = signed_in(&app, "felix", "tok");
+        let (st, body) = call(
+            &app,
+            as_person(
+                &cookie,
+                Some("tok"),
+                json!({"kind":"done","id":"q","text":"B"}),
+            ),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(status("q"), "done");
+
+        // and a person may close what no key of theirs touched
+        say(
+            &app,
+            "nurse-key",
+            json!({"kind":"say","id":"r","text":"Stale","t":["ward"]}),
+        )
+        .await;
+        let (st, body) = call(
+            &app,
+            as_person(&cookie, Some("tok"), json!({"kind":"done","id":"r"})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(status("r"), "done");
     }
 
     #[tokio::test]

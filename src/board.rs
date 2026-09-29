@@ -91,6 +91,53 @@ pub fn is(by: &str, target: &str) -> bool {
     by == target || base(by) == target
 }
 
+/// Same key, whatever the session. A tag is the key's own claim about which
+/// of its sessions wrote, so it can sign but it cannot fence: any session of
+/// a key could have written under any other tag.
+fn same_key(a: &str, b: &str) -> bool {
+    !b.is_empty() && base(a) == base(b)
+}
+
+/// May `by` close this item? `Err` says who can, so a refusal teaches.
+///
+/// An ask that names someone is theirs to close: the asker handed the
+/// decision over, and whoever holds the item is waiting on it too. Anything
+/// else is yours to close if you hold it, opened it, or asked it of anyone
+/// — including "decided against, because". A person signed in is who the
+/// keys answer to, and may close anything; who counts as one is decided by
+/// the identity provider, not here.
+///
+/// Everyone else says instead: that leaves the note and not the verdict.
+/// Checked where a key writes, not in the fold, so history written before
+/// the rule still reads as it did.
+pub fn may_close(item: &Item, by: &str, person: bool) -> Result<(), String> {
+    if person {
+        return Ok(());
+    }
+    if item.status == "asked" && !item.asked_of.is_empty() {
+        return if same_key(by, &item.asked_of) {
+            Ok(())
+        } else {
+            Err(format!(
+                "this is asked of {}, and only they can close it; `say` to add to it",
+                item.asked_of
+            ))
+        };
+    }
+    let asked_it = item.status == "asked" && same_key(by, &item.asked_by);
+    if asked_it || same_key(by, &item.owner) || same_key(by, &item.created_by) {
+        return Ok(());
+    }
+    let whose = if item.owner.is_empty() {
+        format!("{} opened it", item.created_by)
+    } else {
+        format!("{} holds it", item.owner)
+    };
+    Err(format!(
+        "not yours to close: {whose}; `say` to add to it, or `take` it if nobody holds it"
+    ))
+}
+
 fn s(e: &Event, k: &str) -> Option<String> {
     e.get(k)
         .and_then(Value::as_str)
@@ -434,6 +481,52 @@ mod tests {
             x.history.last().unwrap().fold.as_deref(),
             Some("answers the ask")
         );
+    }
+
+    #[test]
+    fn who_may_close_what() {
+        let base = [
+            ev("say", "x", 0, "ana/s1", json!({"text":"X"})),
+            ev("take", "x", 1, "grok", json!({})),
+        ];
+        let x = &fold(&base)["x"];
+        // the holder, the opener (from any session of its key), a person
+        assert!(may_close(x, "grok/t9", false).is_ok());
+        assert!(may_close(x, "ana/other", false).is_ok());
+        assert!(may_close(x, "felix", true).is_ok());
+        // and nobody else
+        let no = may_close(x, "claude", false).unwrap_err();
+        assert!(no.contains("grok holds it") && no.contains("say"), "{no}");
+
+        // an ask that names someone is theirs alone, holder and asker included
+        let mut asked = base.to_vec();
+        asked.push(ev(
+            "ask",
+            "x",
+            2,
+            "grok",
+            json!({"to":"felix","text":"A or B?"}),
+        ));
+        let x = &fold(&asked)["x"];
+        for by in ["grok", "ana", "claude"] {
+            let no = may_close(x, by, false).unwrap_err();
+            assert!(no.contains("asked of felix"), "{by}: {no}");
+        }
+        assert!(may_close(x, "felix", false).is_ok(), "felix's own key");
+        assert!(may_close(x, "felix", true).is_ok());
+
+        // answered, it goes back to its holder to close
+        asked.push(ev("say", "x", 3, "felix", json!({"text":"B"})));
+        assert!(may_close(&fold(&asked)["x"], "grok", false).is_ok());
+
+        // an ask of anyone may be closed by whoever asked it
+        let open = [
+            ev("say", "y", 0, "ana", json!({"text":"Y"})),
+            ev("ask", "y", 1, "bot", json!({"text":"anyone?"})),
+        ];
+        let y = &fold(&open)["y"];
+        assert!(may_close(y, "bot", false).is_ok());
+        assert!(may_close(y, "claude", false).is_err());
     }
 
     #[test]
